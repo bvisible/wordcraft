@@ -39,6 +39,21 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
             .frame(egui::Frame::NONE.fill(t.panel).inner_margin(10).stroke(Stroke::new(1.0, t.border)))
             .show(ui, |ui| clipboard(app, ui));
     }
+    // //// Neoffice — the Nora assistant pane, outermost at the right; shown when `ui.nora` (File ›
+    // Options › Advanced › Assistant) turns it on.
+    if app.ui.nora_pane {
+        egui::Panel::right("nora_pane")
+            .default_size(320.0)
+            .resizable(true)
+            .frame(egui::Frame::NONE.fill(t.panel).inner_margin(10).stroke(Stroke::new(1.0, t.border)))
+            .show(ui, |ui| {
+                if header(ui, "Nora") {
+                    let _ = app.run("ui.nora", json!({"value": false}));
+                    return;
+                }
+                crate::nora_pane::show(app, ui);
+            });
+    }
     if app.session.view.styles_pane {
         egui::Panel::right("styles_pane")
             .default_size(250.0)

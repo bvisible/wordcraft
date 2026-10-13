@@ -17,6 +17,9 @@ wordcraft-render = { workspace = true }
 wordcraft-engine = { workspace = true }
 wordcraft-zotero = { workspace = true }
 egui = { workspace = true }
+# //// Neoffice — the Nora assistant pane (nora_pane.rs): Nora's client core and its egui panel.
+craft-nora = { workspace = true }
+craft-nora-ui = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }

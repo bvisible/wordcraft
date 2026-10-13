@@ -844,6 +844,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-nora"
+version = "0.1.0"
+source = "git+https://github.com/bvisible/craft-libs?rev=764ce45eec9474690a47bfca4ad5f8076531f6a4#764ce45eec9474690a47bfca4ad5f8076531f6a4"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "craft-nora-ui"
+version = "0.1.0"
+source = "git+https://github.com/bvisible/craft-libs?rev=764ce45eec9474690a47bfca4ad5f8076531f6a4#764ce45eec9474690a47bfca4ad5f8076531f6a4"
+dependencies = [
+ "craft-nora",
+ "egui",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5321,6 +5339,8 @@ dependencies = [
 name = "wordcraft-ui-egui"
 version = "0.6.1"
 dependencies = [
+ "craft-nora",
+ "craft-nora-ui",
  "egui",
  "egui_kittest",
  "image",

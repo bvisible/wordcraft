@@ -416,6 +416,13 @@ fn advanced(app: &mut WordApp, ui: &mut Ui) {
         let _ = app.run("ui.caretAnimation", json!({"value": caret}));
     }
     ui.add_space(8.0);
+    // //// Neoffice — switch for the Nora assistant pane (nora_pane.rs), off by default.
+    section(ui, "Assistant");
+    let mut nora = app.ui.nora_pane;
+    if ui.checkbox(&mut nora, tl!("Show the Nora assistant pane (experimental)")).changed() {
+        let _ = app.run("ui.nora", json!({"value": nora}));
+    }
+    ui.add_space(8.0);
     section(ui, "Customize");
     ui.horizontal(|ui| {
         ui.label(tl!("Keyboard shortcuts:"));

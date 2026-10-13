@@ -57,6 +57,8 @@ pub mod ink;
 pub mod keys;
 pub mod keytips;
 pub mod mini_toolbar;
+// //// Neoffice — added module: the Nora assistant pane, Neoffice's assistant built on craft-nora and craft-nora-ui.
+pub mod nora_pane;
 pub mod objects;
 pub mod options;
 pub mod panes;
@@ -143,6 +145,15 @@ pub struct Services {
     /// `xdg-mime`. `None` (web, macOS) hides the button; macOS shows how to do it in Finder
     /// instead. An error means nothing changed.
     pub make_default_app: Option<Box<dyn Fn() -> Result<DefaultApp, String>>>,
+    // //// Neoffice — the connection of the Nora assistant pane. Nora (the agent) lives on the Neoffice
+    // server, so the pane needs the host's session and credentials to reach her: the host makes the HTTP
+    // call and delivers the answer through `nora_inbox`. Without one (every build today) the pane says
+    // that Nora isn't available and offers no text box.
+    /// Make one call for the Nora pane: a `POST` of a JSON body to a path of the Neoffice instance. The
+    /// host adds the origin and the credentials of its session.
+    pub nora_http: Option<Box<dyn Fn(craft_nora::HttpRequest)>>,
+    /// The answers to [`Services::nora_http`], delivered asynchronously by the host.
+    pub nora_inbox: Option<NoraInbox>,
 }
 
 /// What [`Services::make_default_app`] did.
@@ -156,6 +167,9 @@ pub enum DefaultApp {
 
 /// Files delivered asynchronously.
 pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
+
+// //// Neoffice — answers to the Nora pane's calls, delivered asynchronously by the host like `Inbox`.
+pub type NoraInbox = std::sync::Arc<std::sync::Mutex<Vec<craft_nora::HttpResponse>>>;
 
 /// UI state that persists between runs (and that agents can read and set).
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -243,6 +257,10 @@ pub struct UiState {
     /// File › Options › General: start on File › Home (Blank document, templates, Recent) when
     /// the app opens without a document (#766); on, as in Word. See [`WordApp::start_screen`].
     pub start_screen: bool,
+    // //// Neoffice — the Nora assistant pane, off until the user turns it on.
+    /// File › Options › Advanced › Assistant: show the Nora pane at the right of the page, kept between
+    /// runs (the `ui.nora` command).
+    pub nora_pane: bool,
     /// File › Options › Display: print the page colour (off, as in Word).
     pub print_backgrounds: bool,
     /// File › Options › Display: update fields (dates, page numbers, SEQ…) before printing.
@@ -295,6 +313,8 @@ impl Default for UiState {
             recent_count: 12,
             mini_toolbar: true,
             start_screen: true,
+            // //// Neoffice — off by default: nothing changes for anyone who doesn't ask for it.
+            nora_pane: false,
             print_backgrounds: false,
             update_fields_before_print: false,
             dictionary: Vec::new(),
@@ -349,6 +369,8 @@ pub struct WordApp {
     pub colors: Option<colors::ColorsDialog>,
     /// The Restrict Editing pane (#412).
     pub restrict: dialogs_review::RestrictPane,
+    // //// Neoffice — the conversation of the Nora assistant pane (see `nora_pane`).
+    pub nora: nora_pane::NoraState,
     pub status_msg: Option<(String, f64)>,
     pub previews: previews::Previews,
     /// Media key of the picture a pending Change Picture replaces (#147).
@@ -465,6 +487,8 @@ impl WordApp {
             dialog: None,
             colors: None,
             restrict: Default::default(),
+            // //// Neoffice — the Nora assistant pane's conversation starts empty.
+            nora: Default::default(),
             status_msg: None,
             previews: previews::Previews::default(),
             integrated_titlebar: false,
@@ -1125,6 +1149,16 @@ impl WordApp {
                     Some(_) => return Some(Err("`value` must be true or false".into())),
                 }
                 json!({"startScreen": self.ui.start_screen})
+            }
+            // //// Neoffice — Nora assistant pane: `value` true or false shows or hides it; no value
+            // reads it. Also File › Options › Advanced › Assistant.
+            "ui.nora" => {
+                match p.get("value") {
+                    None => {}
+                    Some(Value::Bool(on)) => self.ui.nora_pane = *on,
+                    Some(_) => return Some(Err("`value` must be true or false".into())),
+                }
+                json!({"nora": self.ui.nora_pane})
             }
             // Shape Format › Text › Create Link: the next click on an empty text box links the
             // selected box to it (`shape.link` with that box as the target); Esc cancels.

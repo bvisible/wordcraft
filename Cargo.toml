@@ -75,6 +75,13 @@ egui_kittest = "0.36"
 rfd = "0.17"
 arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
 
+# //// Neoffice — the Nora assistant pane (crates/ui-egui/src/nora_pane.rs). Neoffice's craft-libs fork
+# carries Nora's client core and its egui panel. Both depend on egui only (the same 0.36 as here), so
+# upstream's craft-libs types are not duplicated. To follow upstream's craft-libs later, merge it into
+# the fork and move this revision; nothing else changes.
+craft-nora = { git = "https://github.com/bvisible/craft-libs", rev = "764ce45eec9474690a47bfca4ad5f8076531f6a4" }
+craft-nora-ui = { git = "https://github.com/bvisible/craft-libs", rev = "764ce45eec9474690a47bfca4ad5f8076531f6a4" }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
