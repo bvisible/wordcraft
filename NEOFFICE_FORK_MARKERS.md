@@ -16,7 +16,7 @@ picture of what is ours and why.
 
 ## What the fork adds
 
-Two workflow files and one feature, all marked in place. The workflow files are new files that carry
+Three workflow files and one feature, all marked in place. The workflow files are new files that carry
 their own `//// Neoffice — added file` header.
 
 - `.github/workflows/neoffice-web.yml`: builds the browser version on a GitHub runner, started by
@@ -24,6 +24,9 @@ their own `//// Neoffice — added file` header.
   disabled on this fork, because they need upstream's signing secrets.
 - `.github/workflows/neoffice-markers.yml`: fails a push to `version-15` when a change to
   upstream's code since the common ancestor carries no marker.
+- `.github/workflows/neoffice-ci.yml`: runs upstream's own quality gate, `cargo xtask ci`, on a
+  GitHub runner (by hand, or on a push that touches code), because the maintainer's Mac has too
+  little disk to run it for every change.
 - **The Nora assistant pane** (Neoffice's assistant, in a pane at the right of the page), off until
   File › Options › Advanced › Assistant or the `ui.nora` command turns it on. It is built on
   `craft-nora` (the conversation with Nora, no I/O) and `craft-nora-ui` (the egui panel), two crates
