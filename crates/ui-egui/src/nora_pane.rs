@@ -289,15 +289,21 @@ mod tests {
         assert_eq!(h.state().session.word_count(), 0, "typing in the pane never edits the document");
 
         // The server gives the conversation an id; the pane then reads the replies and the actions.
-        answer(&inbox, &calls[0], json!({"thread_id": "t1"}));
+        answer(&inbox, &calls[0], json!({"thread_id": "t1", "sent_at": 1000.0}));
         h.run_steps(6);
         let polls = take(&outbox);
         let reads = polls.iter().find(|r| r.path.ends_with("get_messages")).expect("the replies are read");
         let actions = polls.iter().find(|r| r.path.ends_with("get_browser_actions")).expect("the actions are read");
-        answer(&inbox, reads, json!({"messages": [{"role": "assistant", "text": "Done, the intro is friendlier."}]}));
+        // As the real server stamps them: an older reply is not Nora's answer to this message.
+        let replies = json!([
+            {"role": "assistant", "text": "An answer from an earlier conversation.", "ts": 900.0},
+            {"role": "assistant", "text": "Done, the intro is friendlier.", "ts": 1001.0}
+        ]);
+        answer(&inbox, reads, json!({"messages": replies}));
         answer(&inbox, actions, json!({"actions": []}));
         h.run_steps(4);
         assert!(h.query_by_label("Done, the intro is friendlier.").is_some(), "Nora's reply is shown");
+        assert!(h.query_by_label("An answer from an earlier conversation.").is_none(), "a reply older than the send is not");
     }
 
     /// What Nora asks for in the document is refused for now, and she is told.
