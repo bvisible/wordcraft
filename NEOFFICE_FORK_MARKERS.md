@@ -46,6 +46,12 @@ their own `//// Neoffice — added file` header.
   and the web-sys features of `apps/wordcraft-web/Cargo.toml`, and a re-export in
   `crates/ui-egui/src/lib.rs`): a page that asks for it with `?nora` or `?nora=<origin>` gets the
   pane open and connected; every other page behaves exactly as before.
+- **The host bridge of the browser build** (new file `apps/wordcraft-web/src/web/host.rs`; marked
+  changes in `apps/wordcraft-web/src/web.rs`): `window.wordcraftHost` lets the page that hosts the
+  editor (the Drive of the Suite, NeoDesk's window) give it a file (`open(name, bytes)`), receive what
+  it saves (`onSave(name, bytes)`, instead of the browser's dialog; a rejected promise says the save
+  failed) and hear when the unsaved-changes flag changes (`onDirty`). It tells the page it is ready
+  with a `wordcraft:ready` event. A page that sets none of it sees the editor behave as before.
 
 ## Files that cannot carry a comment
 

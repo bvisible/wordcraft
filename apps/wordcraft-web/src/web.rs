@@ -14,6 +14,8 @@ const RECIPIENT_EXTS: &[&str] = &["csv", "tsv", "txt", "xlsx", "xlsm", "ods"];
 mod font_store;
 // //// Neoffice — added module: the Nora pane's connection (a `fetch` with the page's own session).
 mod nora;
+// //// Neoffice — added module: `window.wordcraftHost`, the bridge to the page that hosts the editor.
+mod host;
 const CANVAS_ID: &str = "wordcraft_canvas";
 const LOADING_ID: &str = "wordcraft_loading";
 
@@ -68,6 +70,10 @@ pub fn start() {
                         nora::connect(&mut services, origin.clone(), cc.egui_ctx.clone());
                     }
                     let mut app = WordApp::new(session, services);
+                    // //// Neoffice — the page that hosts the editor gets `window.wordcraftHost` (open a file, receive the saves).
+                    if let Err(e) = host::install(inbox.clone(), cc.egui_ctx.clone()) {
+                        log::error!("the host bridge is unavailable: {e}");
+                    }
                     if nora.is_some()
                         && let Err(e) = app.execute("ui.nora", serde_json::json!({"value": true}))
                     {
@@ -241,7 +247,12 @@ fn services(inbox: Inbox, ctx: egui::Context, dirty: Rc<Cell<bool>>, saves: Rc<P
         download: Some(Box::new(move |path: &str, bytes: &[u8]| download(&saves, &save_ctx, path, bytes))),
         print: Some(Box::new(print_pdf)),
         inbox: Some(inbox),
-        on_dirty: Some(Box::new(move |d| dirty.set(d))),
+        // //// Neoffice — the hosting page hears when the unsaved-changes flag changes (not on every frame).
+        on_dirty: Some(Box::new(move |d| {
+            if dirty.replace(d) != d {
+                host::dirty(d);
+            }
+        })),
         animations_enabled: Some(animations_enabled()),
         store_font: Some(Box::new(font_store::store)),
         forget_font: Some(Box::new(font_store::forget)),
@@ -278,6 +289,10 @@ fn guard_unload(dirty: Rc<Cell<bool>>, saves: Rc<PickerSaves>) -> Result<(), Str
 /// Trigger a browser save dialog or download of `bytes` named after the last component of `path`.
 fn download(saves: &Rc<PickerSaves>, ctx: &egui::Context, path: &str, bytes: &[u8]) -> Result<(), String> {
     let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "document".into());
+    // //// Neoffice — a hosting page that set `wordcraftHost.onSave` receives the file instead of the browser's dialog.
+    if let Some(handled) = host::save(saves, ctx, &name, bytes) {
+        return handled;
+    }
     let window = web_sys::window().ok_or("no window")?;
 
     // On browsers supporting the File System Access API (Chromium: Chrome, Edge, etc.),
