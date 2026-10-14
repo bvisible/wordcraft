@@ -9,7 +9,7 @@ use wordcraft_engine::Session;
 use wordcraft_ui_egui::{Inbox, Services, WordApp};
 
 const DOC_EXTS: &[&str] = &["docx", "docm", "dotx", "dotm", "doc", "dot", "odt", "rtf", "txt", "md", "html", "htm", "tex", "json", "xml"];
-const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "wmf", "emf"];
 const RECIPIENT_EXTS: &[&str] = &["csv", "tsv", "txt", "xlsx", "xlsm", "ods"];
 mod font_store;
 // //// Neoffice — added module: the Nora pane's connection (a `fetch` with the page's own session).
