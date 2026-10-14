@@ -14,7 +14,7 @@ const RECIPIENT_EXTS: &[&str] = &["csv", "tsv", "txt", "xlsx", "xlsm", "ods"];
 mod font_store;
 // //// Neoffice — added module: the Nora pane's connection (a `fetch` with the page's own session).
 mod nora;
-// //// Neoffice — added module: `window.wordcraftHost`, the bridge to the page that hosts the editor.
+// //// Neoffice — added module: the `postMessage` bridge to the page that frames the editor (`?host=parent`).
 mod host;
 const CANVAS_ID: &str = "wordcraft_canvas";
 const LOADING_ID: &str = "wordcraft_loading";
@@ -41,6 +41,10 @@ pub fn start() {
         {
             create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
         }
+        // //// Neoffice — a page that frames the editor and asks for the bridge (`?host=parent`) sends it the file to
+        // edit and takes what it saves.
+        let bridge = host::Bridge::requested();
+        let app_bridge = bridge.clone();
         let result = eframe::WebRunner::new()
             .start(
                 canvas,
@@ -63,6 +67,10 @@ pub fn start() {
                     let mut session = Session::new(doc);
                     session.system_region = region;
                     let mut services = services(inbox.clone(), cc.egui_ctx.clone(), dirty, saves.clone());
+                    // //// Neoffice — the hosting page gets the saves and the unsaved-changes flag, and sends files.
+                    if let Some(bridge) = &app_bridge {
+                        bridge.connect(&mut services, inbox.clone(), saves.clone(), cc.egui_ctx.clone());
+                    }
                     // //// Neoffice — a page that asks for Nora (`?nora`, `?nora=<origin>`) gets the pane, connected
                     // with the page's own session. The browser build keeps no setting, so the host opens it.
                     let nora = nora::requested(&query());
@@ -70,9 +78,12 @@ pub fn start() {
                         nora::connect(&mut services, origin.clone(), cc.egui_ctx.clone());
                     }
                     let mut app = WordApp::new(session, services);
-                    // //// Neoffice — the page that hosts the editor gets `window.wordcraftHost` (open a file, receive the saves).
-                    if let Err(e) = host::install(inbox.clone(), cc.egui_ctx.clone()) {
-                        log::error!("the host bridge is unavailable: {e}");
+                    // //// Neoffice — the hosting page learns the editor listens, and names the user who signs the comments.
+                    if let Some(bridge) = &app_bridge {
+                        if let Some(author) = host::Bridge::author() {
+                            app.session.author = author;
+                        }
+                        bridge.post_ready();
                     }
                     if nora.is_some()
                         && let Err(e) = app.execute("ui.nora", serde_json::json!({"value": true}))
@@ -81,13 +92,18 @@ pub fn start() {
                     }
                     app.autosave = false;
                     // No document to show: start on File › Home, as the desktop app does (#766).
-                    if !sample {
+                    // //// Neoffice — not when a hosting page sends the file to edit: it would flash File › Home first.
+                    if !sample && app_bridge.is_none() {
                         app.start_screen();
                     }
                     Ok(Box::new(WebShell { app, inbox, saves }))
                 }),
             )
             .await;
+        // //// Neoffice — a hosting page hears that the editor could not start (no WebGPU nor WebGL2, for example).
+        if let (Err(e), Some(bridge)) = (&result, &bridge) {
+            bridge.post_failed(&format!("{e:?}"));
+        }
         if let Some(el) = document.get_element_by_id(LOADING_ID) {
             match result {
                 Ok(()) => el.remove(),
@@ -260,12 +276,7 @@ fn services(inbox: Inbox, ctx: egui::Context, dirty: Rc<Cell<bool>>, saves: Rc<P
         download: Some(Box::new(move |path: &str, bytes: &[u8]| download(&saves, &save_ctx, path, bytes))),
         print: Some(Box::new(print_pdf)),
         inbox: Some(inbox),
-        // //// Neoffice — the hosting page hears when the unsaved-changes flag changes (not on every frame).
-        on_dirty: Some(Box::new(move |d| {
-            if dirty.replace(d) != d {
-                host::dirty(d);
-            }
-        })),
+        on_dirty: Some(Box::new(move |d| dirty.set(d))),
         animations_enabled: Some(animations_enabled()),
         store_font: Some(Box::new(font_store::store)),
         forget_font: Some(Box::new(font_store::forget)),
@@ -302,10 +313,6 @@ fn guard_unload(dirty: Rc<Cell<bool>>, saves: Rc<PickerSaves>) -> Result<(), Str
 /// Trigger a browser save dialog or download of `bytes` named after the last component of `path`.
 fn download(saves: &Rc<PickerSaves>, ctx: &egui::Context, path: &str, bytes: &[u8]) -> Result<(), String> {
     let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "document".into());
-    // //// Neoffice — a hosting page that set `wordcraftHost.onSave` receives the file instead of the browser's dialog.
-    if let Some(handled) = host::save(saves, ctx, &name, bytes) {
-        return handled;
-    }
     let window = web_sys::window().ok_or("no window")?;
 
     // On browsers supporting the File System Access API (Chromium: Chrome, Edge, etc.),

@@ -47,11 +47,15 @@ their own `//// Neoffice — added file` header.
   `crates/ui-egui/src/lib.rs`): a page that asks for it with `?nora` or `?nora=<origin>` gets the
   pane open and connected; every other page behaves exactly as before.
 - **The host bridge of the browser build** (new file `apps/wordcraft-web/src/web/host.rs`; marked
-  changes in `apps/wordcraft-web/src/web.rs`): `window.wordcraftHost` lets the page that hosts the
-  editor (the Drive of the Suite, NeoDesk's window) give it a file (`open(name, bytes)`), receive what
-  it saves (`onSave(name, bytes)`, instead of the browser's dialog; a rejected promise says the save
-  failed) and hear when the unsaved-changes flag changes (`onDirty`). It tells the page it is ready
-  with a `wordcraft:ready` event. A page that sets none of it sees the editor behave as before.
+  changes in `apps/wordcraft-web/src/web.rs`, the web-sys features of `apps/wordcraft-web/Cargo.toml`
+  and one line in `crates/ui-egui/src/i18n/neoffice.rs`): the `postMessage` contract of a page that
+  frames the editor (`?host=parent`, same origin), the one upstream's GridCraft and PdfCraft already
+  use, so one host page (the Drive of the Suite, NeoDesk's window) drives every Craft editor:
+  `wordcraft:ready`, `wordcraft:open` (a file to edit), `wordcraft:save` (every file the editor would
+  download), `wordcraft:dirty` and `wordcraft:failed`, plus `wordcraft:saved` (`ok: false` marks the
+  document unsaved again and says why: ours, upstream's bridges have no answer to a save) and
+  `?author=` (the name that signs comments). Without `?host=parent` the editor behaves as before.
+  Drop it when upstream ships its own bridge for WordCraft, keeping `wordcraft:saved`.
 
 ## Files that cannot carry a comment
 
