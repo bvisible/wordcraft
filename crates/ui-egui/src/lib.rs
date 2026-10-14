@@ -155,12 +155,17 @@ pub struct Services {
     /// The answers to [`Services::nora_http`], delivered asynchronously by the host.
     pub nora_inbox: Option<NoraInbox>,
     // //// Neoffice — what a hosting page (the Drive of the Suite, Neodesk's window) changes about the editor: a text
-    // file the person opened is saved as text rather than turned into a Word document, and the links to the upstream
-    // project's community (Discord) are not shown. Both off, as upstream has them, for every other build.
+    // file the person opened is saved as text rather than turned into a Word document, the links to the upstream
+    // project's community (Discord) are not shown, and the page, not the editor, opens documents. All off, as
+    // upstream has them, for every other build.
     /// A document opened from a text file (`.txt`, `.md`) is saved under its own name and in its own format.
     pub keep_text_format: bool,
     /// Hide the links to the upstream project's community (Discord).
     pub hide_community_links: bool,
+    // //// Neoffice — see above: the page opens the documents.
+    /// The hosting page opens, creates and closes documents: File › Home, New and Open are not offered, and a
+    /// command that would replace or close the document is refused (the page's own file still opens).
+    pub host_owns_documents: bool,
 }
 
 /// What [`Services::make_default_app`] did.
@@ -387,6 +392,9 @@ pub struct WordApp {
     /// Web: a recipient list was asked for (Select Recipients › Use an Existing List…), so the
     /// next text file from the picker loads as recipients instead of opening (#240).
     pub recipient_list_pending: bool,
+    // //// Neoffice — set while the page that hosts the editor hands it a file, so that the guard of
+    // [`Services::host_owns_documents`] lets that one open through (`drain_inbox`).
+    host_switch_allowed: bool,
     /// The font database's [`generation`](wordcraft_fonts::FontDb::generation) last seen: when
     /// fonts are added or removed (by any route) the font lists and the layout are refreshed.
     font_generation: u64,
@@ -537,6 +545,8 @@ impl WordApp {
             autosave_path: None,
             change_picture_target: None,
             recipient_list_pending: false,
+            // //// Neoffice — see `host_switch_allowed`.
+            host_switch_allowed: false,
             font_generation: wordcraft_fonts::FontDb::global().generation(),
             dialog_pick: None,
             file_dialog: None,
@@ -558,11 +568,13 @@ impl WordApp {
     /// tests, `ui_shot` and windows opened for a document start in the editor. Returns whether
     /// the Start screen shows.
     pub fn start_screen(&mut self) -> bool {
-        if self.ui.start_screen {
+        // //// Neoffice — never when the hosting page opens the documents: it has the one to show.
+        if self.ui.start_screen && !self.host_owns_documents() {
             self.ui.backstage = true;
             self.ui.backstage_page = "home".into();
         }
-        self.ui.start_screen
+        // //// Neoffice — and it says so: a hosting page that opens the documents has none to show.
+        self.ui.start_screen && !self.host_owns_documents()
     }
 
     /// Preferences to save between runs: the UI state plus the current user name and editing
@@ -620,6 +632,15 @@ impl WordApp {
     /// Close, Envelopes, Labels and Finish & Merge on a document with unsaved changes first ask
     /// Save / Don't Save / Cancel, and the command runs once that is answered (`ui.saveChanges`).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        // //// Neoffice — a hosting page opens the documents: what would replace or close this one (New, Open,
+        // Close, Labels, Envelopes, Finish & Merge) is refused, or the person would be shown a document the page
+        // knows nothing about (« Open Studio Handbook — Unsaved » in the window of a quotation). The page's own file
+        // arrives through `drain_inbox`, which lifts the guard for it.
+        if self.services.host_owns_documents && !self.host_switch_allowed && switches_document(id, &params) {
+            let why = tl!("This document is opened from the page that hosts the editor.").to_string();
+            self.status(why.clone());
+            return Err(why);
+        }
         // A button whose command needs input the user hasn't given yet opens its dialog (#240).
         if let Some(name) = input_dialog(id, &params)
             && widgets::enabled(self, id)
@@ -983,7 +1004,9 @@ impl WordApp {
             "ui.backstage" => {
                 self.ui.backstage = p.get("value").and_then(Value::as_bool).unwrap_or(!self.ui.backstage);
                 if let Some(pg) = s("page") {
-                    self.ui.backstage_page = pg.into();
+                    // //// Neoffice — Home, New and Open are not there when the hosting page opens the documents.
+                    let hidden = self.host_owns_documents() && matches!(pg, "home" | "new" | "open");
+                    self.ui.backstage_page = if hidden { "info".into() } else { pg.into() };
                 }
                 if let Some(pane) = s("pane") {
                     self.ui.options_pane = pane.into();
@@ -1344,6 +1367,11 @@ impl WordApp {
         !self.services.hide_community_links
     }
 
+    // //// Neoffice — the hosting page opens the documents: no Home, New or Open (`Services::host_owns_documents`).
+    pub(crate) fn host_owns_documents(&self) -> bool {
+        self.services.host_owns_documents
+    }
+
     /// The window caption is painted with the semibold interface face (Inter). A file name in a
     /// script those faces lack would otherwise be drawn as `?`. Borrow the document fonts'
     /// fallback faces, as IME composition does (#565). A CJK name uses the CJK UI font instead:
@@ -1640,7 +1668,13 @@ impl WordApp {
             } else if img {
                 self.insert_or_change_picture(json!({"data": wordcraft_engine::cmd::insert::base64_encode(&bytes)}))
             } else {
-                self.run("file.open", json!({"path": name, "data": wordcraft_engine::cmd::insert::base64_encode(&bytes)}))
+                // //// Neoffice — the file the hosting page hands over is the one open the guard of
+                // `Services::host_owns_documents` lets through; a document dropped by the person was dropped
+                // before it got here (the web shell asks `opens_as_document`).
+                self.host_switch_allowed = true;
+                let opened = self.run("file.open", json!({"path": name, "data": wordcraft_engine::cmd::insert::base64_encode(&bytes)}));
+                self.host_switch_allowed = false;
+                opened
             };
             if r.is_ok() {
                 self.ui.backstage = false;
@@ -1849,6 +1883,25 @@ fn discards_document(id: &str, params: &Value) -> bool {
         "mailings.finish" => params.get("path").and_then(Value::as_str).is_none(),
         _ => false,
     }
+}
+
+// //// Neoffice — added: what a hosting page's editor must not do by itself. Everything [`discards_document`] says,
+// and the commands that bring another document in without discarding the current one first (the picker of Open, a
+// template, a recovered file): once the page owns the documents, none of them is the editor's to run.
+fn switches_document(id: &str, params: &Value) -> bool {
+    discards_document(id, params) || matches!(id, "file.open" | "file.recover" | "file.newFromTemplate")
+}
+
+// //// Neoffice — added, see [`Services::host_owns_documents`].
+/// Whether a file that reaches the editor from the user (a drop, a pick) would open as the document: not a
+/// picture, a spreadsheet taken as a recipient list, a recipient list or a font. A hosting page that owns the
+/// documents drops these (the web shell asks), and keeps the rest.
+pub fn opens_as_document(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let picture = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"].iter().any(|e| lower.ends_with(e));
+    let sheet = [".xlsx", ".xlsm", ".ods"].iter().any(|e| lower.ends_with(e));
+    let list = lower.ends_with(".csv") || lower.ends_with(".tsv");
+    !(picture || sheet || list || wordcraft_fonts::is_font_file_name(&lower))
 }
 
 /// Wall-clock milliseconds since the Unix epoch: the system clock, or the browser's on the web.
@@ -3862,6 +3915,67 @@ mod tests {
         let mut shown = app();
         shown.run("ui.discord", json!({})).unwrap();
         assert_eq!(shown.canvas.open_url.as_deref(), Some("https://discord.gg/artcraft"));
+    }
+
+    // //// Neoffice — a hosting page opens the documents: the editor does not switch to another one by itself, and
+    // the file the page hands over still opens.
+    #[test]
+    fn a_host_that_opens_the_documents_keeps_the_editor_on_its_document() {
+        let inbox: Inbox = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let services = Services { host_owns_documents: true, inbox: Some(inbox.clone()), ..Default::default() };
+        let mut a = WordApp::new(Session::new(wordcraft_doc::Document::from_text("Le devis du client")), services);
+        let before = a.session.document_id();
+        for (id, params) in [
+            ("file.new", json!({})),
+            ("file.new", json!({"template": "sample"})),
+            ("file.open", json!({"path": "Autre.docx"})),
+            ("file.open", json!({})),
+            ("file.close", json!({})),
+            ("file.recover", json!({})),
+            ("file.newFromTemplate", json!({"template": "letter"})),
+            ("mailings.labels", json!({})),
+        ] {
+            assert!(a.run(id, params).is_err(), "{id} is the page's, not the editor's");
+            assert_eq!(a.session.document_id(), before, "{id}: still the page's document");
+        }
+        let said = a.status_msg.as_ref().map(|(m, _)| m.clone()).unwrap_or_default();
+        assert!(said.contains("hosts the editor"), "{said}");
+        // Even a document with unsaved changes is not asked about: nothing is going to replace it.
+        a.session.dirty = true;
+        assert!(a.run("file.new", json!({})).is_err());
+        assert!(a.dialog.is_none());
+        // The page's own file opens, and the guard is up again after it.
+        a.session.dirty = false;
+        inbox.lock().unwrap().push(("Page.txt".into(), b"Le texte que la page donne.\n".to_vec()));
+        a.drain_inbox();
+        assert_ne!(a.session.document_id(), before, "the page's file replaced the document");
+        assert!(a.run("file.new", json!({})).is_err());
+        // Home, New and Open are not pages of the File menu: asking for one shows Info, and no Start screen shows.
+        a.run("ui.backstage", json!({"value": true, "page": "open"})).unwrap();
+        assert_eq!(a.ui.backstage_page, "info");
+        assert!(!a.start_screen());
+    }
+
+    // //// Neoffice — without the host's setting nothing changes: New and Open are the editor's, as upstream has them.
+    #[test]
+    fn without_a_host_the_editor_opens_documents_as_before() {
+        let mut a = app();
+        let before = a.session.document_id();
+        a.run("file.new", json!({})).unwrap();
+        assert_ne!(a.session.document_id(), before);
+        a.run("ui.backstage", json!({"value": true, "page": "open"})).unwrap();
+        assert_eq!(a.ui.backstage_page, "open");
+    }
+
+    // //// Neoffice — what the web shell asks before it takes a file dropped on an editor whose page opens documents.
+    #[test]
+    fn a_dropped_picture_font_or_list_is_not_a_document() {
+        for name in ["a.docx", "A.TXT", "notes.md", "b.rtf", "c.odt", "d.html", "dropped"] {
+            assert!(opens_as_document(name), "{name}");
+        }
+        for name in ["p.PNG", "p.jpeg", "w.webp", "t.xlsx", "t.ods", "people.csv", "people.TSV", "Uifont-Regular.ttf", "f.otf"] {
+            assert!(!opens_as_document(name), "{name}");
+        }
     }
 
     #[test]

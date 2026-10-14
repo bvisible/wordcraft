@@ -18,6 +18,11 @@ const PAGES: [(&str, &str); 9] = [
     ("options", "Options"),
 ];
 
+// //// Neoffice — the pages of the File menu that bring another document in (`Services::host_owns_documents`).
+fn is_document_switch_page(id: &str) -> bool {
+    matches!(id, "home" | "new" | "open")
+}
+
 pub fn show(app: &mut WordApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let mac = app.integrated_titlebar;
@@ -57,7 +62,9 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                 app.canvas.want_focus = true;
             }
             ui.add_space(if mac { 12.0 } else { 6.0 });
-            for (id, label) in PAGES {
+            // //// Neoffice — Home, New and Open are the hosting page's to offer, not the editor's.
+            let hosted = app.host_owns_documents();
+            for (id, label) in PAGES.into_iter().filter(|(id, _)| !(hosted && is_document_switch_page(id))) {
                 let (r, resp) = ui.allocate_exact_size(vec2(200.0, 38.0), Sense::click());
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tl!(label)));
                 let active = app.ui.backstage_page == id;
@@ -119,6 +126,10 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
             });
         });
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.ribbon).inner_margin(egui::Margin::symmetric(40, 30))).show(ui, |ui| {
+        // //// Neoffice — a page that was current before the hosting page took the documents shows Info instead.
+        if app.host_owns_documents() && is_document_switch_page(&app.ui.backstage_page) {
+            app.ui.backstage_page = "info".into();
+        }
         egui::ScrollArea::vertical().show(ui, |ui| match app.ui.backstage_page.as_str() {
             "home" => home_page(app, ui),
             "new" => new_page(app, ui),

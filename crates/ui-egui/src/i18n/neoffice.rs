@@ -36,6 +36,7 @@ pub const FRENCH: &[(&str, &str)] = &[
     ("Undo the last change", "Annuler la dernière modification"),
     ("Send", "Envoyer"),
     ("Couldn't save {name}: {error}", "Impossible d'enregistrer {name} : {error}"),
+    ("This document is opened from the page that hosts the editor.", "Ce document est ouvert depuis la page qui héberge l'éditeur."),
 ];
 
 /// `s` in `lang`, when Neoffice has translated it.

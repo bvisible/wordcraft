@@ -66,6 +66,9 @@ impl Bridge {
         // and the upstream project's links are not shown (`Services::keep_text_format`, `hide_community_links`).
         services.keep_text_format = true;
         services.hide_community_links = true;
+        // //// Neoffice — and it opens the documents: no Home, New or Open in the editor, no document dropped on it
+        // (`Services::host_owns_documents`).
+        services.host_owns_documents = true;
         let handed = saves.clone();
         self.listen(inbox, saves, ctx);
         let bridge = self.clone();

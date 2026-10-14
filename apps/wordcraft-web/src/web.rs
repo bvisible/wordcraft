@@ -191,11 +191,19 @@ impl WebShell {
 impl eframe::App for WebShell {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
+        // //// Neoffice — a hosting page opens the documents: a document dropped on the editor would replace the one
+        // the page gave it, so it is not taken (a picture, a font or a recipient list still is).
+        let hosted = self.app.services.host_owns_documents;
         for f in dropped {
             let inbox = self.inbox.clone();
             let ctx = ctx.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped".into());
+                // //// Neoffice — a document dropped on an editor whose page opens the documents (see above).
+                if hosted && wordcraft_ui_egui::opens_as_document(&name) {
+                    log::info!("{name} was dropped on an editor whose page opens the documents: not taken");
+                    return;
+                }
                 match f.bytes_async().await {
                     Ok(bytes) => {
                         inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, bytes));

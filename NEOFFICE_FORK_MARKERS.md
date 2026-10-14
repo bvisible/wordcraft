@@ -66,6 +66,15 @@ their own `//// Neoffice — added file` header.
   branch of `execute`, `ui.discord`, three small functions and two tests), `chrome.rs`, `ribbon.rs`, `backstage.rs`,
   `dialogs.rs` and `options.rs`. Every other build behaves as before.
 
+- **A hosting page opens the documents** (`Services::host_owns_documents`, set by
+  `apps/wordcraft-web/src/web/host.rs`, so only when a page frames the editor with `?host=parent`): the editor does not
+  switch to another document by itself. New, Open, Close, New from Template, Recover and the Mailings commands that
+  make a new document are refused with a status message (`run` in `crates/ui-egui/src/lib.rs`, `switches_document`),
+  File › Home, New and Open are not pages of the File menu (`backstage.rs`) and no Start screen shows, and a document
+  dropped on the editor is not taken (`opens_as_document`, asked by `apps/wordcraft-web/src/web.rs`); the file the page
+  hands over still opens (`drain_inbox` lifts the guard for it). Before, File › New or Open in a hosted window replaced
+  the document of the page with another one the page knew nothing about. Every other build behaves as before.
+
 ## Files that cannot carry a comment
 
 | File | Why it is ours |
