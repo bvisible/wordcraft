@@ -165,6 +165,10 @@ pub(crate) fn qat_menu(ui: &mut Ui, app: &mut WordApp) {
     ui.label(egui::RichText::new(tl!("Customize Quick Access Toolbar")).font(semibold(12.0)));
     ui.separator();
     for id in QAT_MENU {
+        // //// Neoffice — no New or Open to put in the toolbar of an editor whose hosting page opens the documents.
+        if app.host_owns_documents() && crate::hidden_from_a_host(id) {
+            continue;
+        }
         let Some(label) = app.session.registry.get(id).map(|s| tl!(s.label).to_string()) else { continue };
         let on = app.session.ribbon.qat().contains(&id);
         let mark = egui::RichText::new("✓");

@@ -2104,6 +2104,13 @@ fn switches_document(id: &str, params: &Value) -> bool {
     discards_document(id, params) || matches!(id, "file.open" | "file.recover" | "file.newFromTemplate")
 }
 
+// //// Neoffice — added: the commands an editor whose hosting page opens the documents does not offer (in its command
+// search, its Quick Access Toolbar menu): they bring another document in or take the page's away, and `run` refuses
+// them anyway. The mail merge ones that only add to the document (an envelope, a merged file) stay.
+pub(crate) fn hidden_from_a_host(id: &str) -> bool {
+    matches!(id, "file.new" | "file.open" | "file.close" | "file.recover" | "file.newFromTemplate" | "mailings.labels")
+}
+
 // //// Neoffice — added, see [`Services::host_owns_documents`].
 /// Whether a file that reaches the editor from the user (a drop, a pick) would open as the document: not a
 /// picture, a spreadsheet taken as a recipient list, a recipient list or a font. A hosting page that owns the

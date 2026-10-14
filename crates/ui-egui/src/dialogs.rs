@@ -2243,12 +2243,17 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let r = ui.add(egui::TextEdit::singleline(query).hint_text(tl!("Type a command, e.g. \"insert table\"")).desired_width(380.0));
             r.request_focus();
             let reg = app.session.registry.clone();
+            // //// Neoffice — no New, Open or Close to find in an editor whose hosting page opens the documents.
+            let hosted = app.host_owns_documents();
+            let offered = |id: &str| !(hosted && crate::hidden_from_a_host(id));
             // An empty box suggests a few common commands, as Word's Search does.
             let mut hits: Vec<&wordcraft_engine::CommandSpec> = if query.trim().is_empty() {
                 ui.label(egui::RichText::new(tl!("Suggested")).font(semibold(12.5)));
-                SEARCH_SUGGESTIONS.iter().filter_map(|id| reg.get(id)).collect()
+                // //// Neoffice — the suggestions, without the commands a host keeps for itself.
+                SEARCH_SUGGESTIONS.iter().filter(|id| offered(id)).filter_map(|id| reg.get(id)).collect()
             } else {
-                reg.all().iter().filter(|c| command_matches(c, query)).collect()
+                // //// Neoffice — the matches, without the commands a host keeps for itself.
+                reg.all().iter().filter(|c| offered(c.id) && command_matches(c, query)).collect()
             };
             hits.truncate(14);
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -3405,6 +3410,36 @@ mod tests {
         }
         assert_eq!(serde_json::to_value(&h.state().session.doc).unwrap(), before, "search does not change the document");
         crate::i18n::set_current(crate::i18n::Lang::EN);
+    }
+
+    // //// Neoffice — the command search of an editor whose hosting page opens the documents finds no command that
+    // brings another document in or takes the page's away; the other commands are there as before.
+    #[test]
+    fn the_command_search_of_a_host_that_opens_the_documents_finds_no_new_open_or_close() {
+        use egui_kittest::kittest::Queryable;
+        for hosted in [false, true] {
+            let services = crate::Services { host_owns_documents: hosted, ..Default::default() };
+            let app = WordApp::new(Session::new(wordcraft_doc::Document::new()), services);
+            let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
+                |ui, app: &mut WordApp| {
+                    let ctx = ui.ctx().clone();
+                    app.logic(&ctx);
+                    app.ui(ui);
+                },
+                app,
+            );
+            h.run_steps(4);
+            let found = |h: &mut egui_kittest::Harness<'_, WordApp>, query: &str| {
+                h.state_mut().dialog = Some(Dialog::Commands { query: query.into(), swallow: false });
+                h.run_steps(4);
+                h.query_all(egui_kittest::kittest::By::new().role(egui::accesskit::Role::Button).label_contains("   —   ")).count()
+            };
+            for query in ["file.new", "file.open", "file.close"] {
+                let n = found(&mut h, query);
+                assert_eq!(n > 0, !hosted, "{query}, hosted {hosted}: {n} result(s)");
+            }
+            assert!(found(&mut h, "file.print") > 0, "the other commands are found, hosted {hosted}");
+        }
     }
 
     /// Open the Paragraph dialog and press OK without changing anything.
