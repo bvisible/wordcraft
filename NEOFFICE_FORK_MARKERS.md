@@ -36,7 +36,11 @@ their own `//// Neoffice — added file` header.
   command, `Services::nora_http` and `Services::nora_inbox` for the host's connection, the pane's
   state), `crates/ui-egui/src/panes.rs` (the pane) and `crates/ui-egui/src/options.rs` (the
   checkbox). Without a host connection, which is every build today, the pane says that Nora isn't
-  available and offers no text box.
+  available and offers no text box. With one, what Nora asks for in the document is played through
+  `WordApp::execute` (editing commands only, nothing that reaches a file, one undo step per action).
+  Her strings are translated outside upstream's catalogs, in the new file
+  `crates/ui-egui/src/i18n/neoffice.rs` (French), which `i18n::tr` falls back to (one marked line in
+  `crates/ui-egui/src/i18n/mod.rs`).
 
 ## Files that cannot carry a comment
 

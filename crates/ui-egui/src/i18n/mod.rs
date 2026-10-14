@@ -26,6 +26,8 @@
 //! - [`fmt`]: fill `{name}` placeholders after a lookup; translators may reorder them.
 
 mod catalog;
+// //// Neoffice — added module: our own strings (the Nora pane), translated outside upstream's catalogs.
+mod neoffice;
 
 use std::cell::Cell;
 use std::sync::OnceLock;
@@ -368,7 +370,9 @@ pub fn tr(lang: Lang, s: &str) -> &str {
     if pseudo::on() {
         return pseudo::mark(s);
     }
-    lang.catalog().plain(s).unwrap_or(s)
+    // //// Neoffice — the strings we added (the Nora pane) are translated in `neoffice.rs`, not in upstream's
+    // catalogs, so that a merge of upstream never touches them; a catalog that has the string wins.
+    lang.catalog().plain(s).or_else(|| neoffice::plain(lang, s)).unwrap_or(s)
 }
 
 /// A style's name as the interface shows it: built-in styles (`Normal`, `Heading 2`, `TOC 3`) in
