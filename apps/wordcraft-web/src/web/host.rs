@@ -88,7 +88,7 @@ pub fn save(saves: &Rc<PickerSaves>, ctx: &egui::Context, name: &str, bytes: &[u
         if let Err(error) = wasm_bindgen_futures::JsFuture::from(settled).await {
             let error = reason(&error);
             log::error!("the hosting page could not save {name}: {error}");
-            saves.unsaved.borrow_mut().push((name, Some(error)));
+            saves.refused.borrow_mut().push((name, error));
         }
         saves.pending.set(saves.pending.get().saturating_sub(1));
         ctx.request_repaint();

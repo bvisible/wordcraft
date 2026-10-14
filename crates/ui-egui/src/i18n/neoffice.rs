@@ -35,6 +35,7 @@ pub const FRENCH: &[(&str, &str)] = &[
     ("Save the document", "Enregistrer le document"),
     ("Undo the last change", "Annuler la dernière modification"),
     ("Send", "Envoyer"),
+    ("Couldn't save {name}: {error}", "Impossible d'enregistrer {name} : {error}"),
 ];
 
 /// `s` in `lang`, when Neoffice has translated it.

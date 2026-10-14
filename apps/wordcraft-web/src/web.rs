@@ -118,6 +118,9 @@ struct PickerSaves {
     pending: Cell<u32>,
     /// Picker saves that didn't write the file: (name, error, or `None` when cancelled).
     unsaved: RefCell<Vec<(String, Option<String>)>>,
+    // //// Neoffice — saves the hosting page refused (name, reason). Kept apart from the picker's list so the
+    // //// status bar says "couldn't save", not "couldn't download": nothing is downloaded when a page hosts the editor.
+    refused: RefCell<Vec<(String, String)>>,
 }
 
 impl WebShell {
@@ -136,6 +139,16 @@ impl WebShell {
                 );
                 self.app.status(msg);
             }
+        }
+        // //// Neoffice — a save the hosting page refused leaves the document unsaved, like a failed picker save.
+        let refused = std::mem::take(&mut *self.saves.refused.borrow_mut());
+        for (name, error) in refused {
+            if wordcraft_ui_egui::keeps_everything(&name) {
+                self.app.session.dirty = true;
+            }
+            let msg =
+                wordcraft_ui_egui::i18n::fmt(wordcraft_ui_egui::i18n::t("Couldn't save {name}: {error}"), &[("name", &name), ("error", &error)]);
+            self.app.status(msg);
         }
     }
 }
