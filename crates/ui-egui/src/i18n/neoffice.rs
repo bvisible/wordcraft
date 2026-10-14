@@ -6,7 +6,9 @@
 //! string wins over this table.
 //!
 //! French is the first language here: Neoffice's customers read it. The other languages show these
-//! strings in English until someone adds them.
+//! strings in English until someone adds them, except the two the interface looks up with the Nora pane
+//! closed (see [`COMPLETE_CATALOGS`]): upstream keeps four catalogs complete and its audit fails on a string
+//! they lack.
 
 use super::Lang;
 
@@ -39,12 +41,27 @@ pub const FRENCH: &[(&str, &str)] = &[
     ("This document is opened from the page that hosts the editor.", "Ce document est ouvert depuis la page qui héberge l'éditeur."),
 ];
 
+/// The strings the interface looks up whatever the Nora pane does (its ribbon group and its switch in
+/// File › Options), in the languages whose catalogs upstream keeps complete: its audit
+/// (`i18n::audit`) fails on a string they have no entry for. English first, as in [`FRENCH`].
+const COMPLETE_CATALOGS: &[(&str, &[(&str, &str)])] = &[
+    ("ru", &[("Assistant", "Ассистент"), ("Show the Nora assistant pane (experimental)", "Показывать область ассистента Nora (экспериментально)")]),
+    ("hu", &[("Assistant", "Asszisztens"), ("Show the Nora assistant pane (experimental)", "Nora-asszisztens panel megjelenítése (kísérleti)")]),
+    ("tr", &[("Assistant", "Asistan"), ("Show the Nora assistant pane (experimental)", "Nora asistan bölmesini göster (deneysel)")]),
+    ("bg", &[("Assistant", "Асистент"), ("Show the Nora assistant pane (experimental)", "Показване на панела на асистента Nora (експериментално)")]),
+];
+
 /// `s` in `lang`, when Neoffice has translated it.
 pub fn plain(lang: Lang, s: &str) -> Option<&'static str> {
-    match lang.code() {
-        "fr" => FRENCH.iter().find(|(english, _)| *english == s).map(|(_, french)| *french),
-        _ => None,
+    let code = lang.code();
+    if code == "fr" {
+        return FRENCH.iter().find(|(english, _)| *english == s).map(|(_, french)| *french);
     }
+    COMPLETE_CATALOGS
+        .iter()
+        .find(|(language, _)| *language == code)
+        .and_then(|(_, table)| table.iter().find(|(english, _)| *english == s))
+        .map(|(_, translated)| *translated)
 }
 
 #[cfg(test)]
@@ -70,10 +87,27 @@ mod tests {
     }
 
     #[test]
-    fn only_french_has_them_for_now() {
+    fn only_french_has_them_all_for_now() {
         let fr = crate::i18n::Lang::all().find(|l| l.code() == "fr");
         assert_eq!(fr.and_then(|l| plain(l, "New conversation")), Some("Nouvelle conversation"));
         assert_eq!(plain(crate::i18n::Lang::EN, "New conversation"), None);
         assert_eq!(fr.and_then(|l| plain(l, "A string upstream has")), None);
+        // The four complete catalogs have the two strings the interface looks up, and only those.
+        for code in ["ru", "hu", "tr", "bg"] {
+            let lang = crate::i18n::Lang::all().find(|l| l.code() == code);
+            assert!(lang.and_then(|l| plain(l, "Assistant")).is_some(), "{code}");
+            assert!(lang.and_then(|l| plain(l, "Show the Nora assistant pane (experimental)")).is_some(), "{code}");
+            assert_eq!(lang.and_then(|l| plain(l, "New conversation")), None, "{code}");
+        }
+    }
+
+    #[test]
+    fn the_strings_of_the_complete_catalogs_are_in_the_french_table_too() {
+        for (code, table) in COMPLETE_CATALOGS {
+            for (english, translated) in *table {
+                assert!(FRENCH.iter().any(|(e, _)| e == english), "{code}: {english:?} has no French entry");
+                assert_eq!(translated.trim(), *translated, "{code}: stray whitespace in {translated:?}");
+            }
+        }
     }
 }

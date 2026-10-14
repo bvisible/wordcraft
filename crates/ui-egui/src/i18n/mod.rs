@@ -332,7 +332,8 @@ pub fn current() -> Lang {
 
 /// Does `lang` have a catalog entry for this string? (English never does: it is the source.)
 pub fn has(lang: Lang, s: &str) -> bool {
-    lang.catalog().plain(s).is_some()
+    // //// Neoffice — the strings we added are translated in `neoffice.rs`, outside upstream's catalogs (see `tr`).
+    lang.catalog().plain(s).is_some() || neoffice::plain(lang, s).is_some()
 }
 
 /// `s` in the current language ([`tr`] with [`current`]).
