@@ -96,6 +96,7 @@ pub fn start() {
                     if !sample && app_bridge.is_none() {
                         app.start_screen();
                     }
+                    // //// Neoffice — no save has been handed to the hosting page yet (`handed_rev`).
                     Ok(Box::new(WebShell { app, inbox, saves, handed_rev: None }))
                 }),
             )
