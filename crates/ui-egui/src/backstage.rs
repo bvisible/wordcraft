@@ -19,9 +19,11 @@ const PAGES: [(&str, &str); 10] = [
     ("options", "Options"),
 ];
 
-// //// Neoffice — the pages of the File menu that bring another document in (`Services::host_owns_documents`).
+// //// Neoffice — the entries of the File menu that bring another document in (Home, New, Open) or take the page's
+// away (Close): the hosting page's to offer, not the editor's (`Services::host_owns_documents`). Close would leave
+// the editor empty, with no way to get the page's document back.
 fn is_document_switch_page(id: &str) -> bool {
-    matches!(id, "home" | "new" | "open")
+    matches!(id, "home" | "new" | "open" | "close")
 }
 
 pub fn show(app: &mut WordApp, ui: &mut Ui) {
@@ -657,6 +659,33 @@ mod tests {
         h.run_steps(4);
         h.state_mut().run("ui.saveChanges", json!({"answer": "dontSave"})).unwrap();
         assert!(h.state().quit_requested, "Don't Save closes");
+    }
+
+    // //// Neoffice — a hosting page that opens the documents has its File menu without Home, New, Open and Close.
+    #[test]
+    fn a_host_that_opens_the_documents_has_no_home_new_open_or_close_in_the_file_menu() {
+        use egui_kittest::kittest::Queryable;
+        for (hosted, shown) in [(false, true), (true, false)] {
+            let services = Services { host_owns_documents: hosted, ..Default::default() };
+            let mut a = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::new()), services);
+            a.run("ui.backstage", json!({"value": true, "page": "info"})).unwrap();
+            let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
+                |ui, app: &mut WordApp| {
+                    let ctx = ui.ctx().clone();
+                    app.logic(&ctx);
+                    app.ui(ui);
+                },
+                a,
+            );
+            h.run_steps(4);
+            for entry in ["Home", "New", "Open", "Close"] {
+                assert_eq!(h.query_by_label(entry).is_some(), shown, "{entry}, hosted {hosted}");
+            }
+            // What the document needs is there either way.
+            for entry in ["Info", "Save", "Save As", "Print", "Export", "Options"] {
+                assert!(h.query_all_by_label(entry).count() > 0, "{entry}, hosted {hosted}");
+            }
+        }
     }
 
     /// A document without unsaved changes closes without a prompt.
