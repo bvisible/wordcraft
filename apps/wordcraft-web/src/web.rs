@@ -96,7 +96,7 @@ pub fn start() {
                     if !sample && app_bridge.is_none() {
                         app.start_screen();
                     }
-                    Ok(Box::new(WebShell { app, inbox, saves }))
+                    Ok(Box::new(WebShell { app, inbox, saves, handed_rev: None }))
                 }),
             )
             .await;
@@ -123,6 +123,8 @@ struct WebShell {
     app: WordApp,
     inbox: Inbox,
     saves: Rc<PickerSaves>,
+    // //// Neoffice — (revision, document id) when the hosting page was last handed a save.
+    handed_rev: Option<(u64, u64)>,
 }
 
 /// Saves the browser's save picker finishes after `download` has returned (#728). The app marks
@@ -137,6 +139,9 @@ struct PickerSaves {
     // //// Neoffice — saves the hosting page refused (name, reason). Kept apart from the picker's list so the
     // //// status bar says "couldn't save", not "couldn't download": nothing is downloaded when a page hosts the editor.
     refused: RefCell<Vec<(String, String)>>,
+    // //// Neoffice — a save was handed to the hosting page this frame; and the names it has said it stored.
+    handed: Cell<bool>,
+    confirmed: RefCell<Vec<String>>,
 }
 
 impl WebShell {
@@ -156,6 +161,10 @@ impl WebShell {
                 self.app.status(msg);
             }
         }
+        // //// Neoffice — the revision of the document when the hosting page was handed a save.
+        if self.saves.handed.replace(false) {
+            self.handed_rev = Some((self.app.session.rev(), self.app.session.document_id()));
+        }
         // //// Neoffice — a save the hosting page refused leaves the document unsaved, like a failed picker save.
         let refused = std::mem::take(&mut *self.saves.refused.borrow_mut());
         for (name, error) in refused {
@@ -165,6 +174,15 @@ impl WebShell {
             let msg =
                 wordcraft_ui_egui::i18n::fmt(wordcraft_ui_egui::i18n::t("Couldn't save {name}: {error}"), &[("name", &name), ("error", &error)]);
             self.app.status(msg);
+        }
+        // //// Neoffice — a save the page stored (after it had refused one, the user having settled the conflict)
+        // //// marks the document saved again, but only when it has not changed since it was handed over.
+        for name in std::mem::take(&mut *self.saves.confirmed.borrow_mut()) {
+            let unchanged = self.handed_rev == Some((self.app.session.rev(), self.app.session.document_id()));
+            if unchanged && wordcraft_ui_egui::keeps_everything(&name) {
+                self.app.session.dirty = false;
+                self.app.status_msg = None;
+            }
         }
     }
 }

@@ -12,9 +12,10 @@
 //!   WordCraft would otherwise download: Save and Save As, and the exports (PDF, plain text…).
 //!   The parent stores it, or offers it, by the file's extension.
 //! - `wordcraft:saved` (from the parent): `{ name, ok, error }`. Neoffice's addition: how storing
-//!   `name` went. `ok: false` marks the document unsaved again and says why in the status bar. A
-//!   parent that never answers leaves the document saved once the file has been handed over, as
-//!   upstream's bridges do.
+//!   `name` went. `ok: false` marks the document unsaved again and says why in the status bar;
+//!   `ok: true` marks it saved again when it has not changed since it was handed over (a refused save
+//!   the user then settled, by replacing the other version, ends there). A parent that never answers
+//!   leaves the document saved once the file has been handed over, as upstream's bridges do.
 //! - `wordcraft:dirty` (to the parent): `{ dirty }` whenever unsaved changes appear or go away.
 //! - `wordcraft:failed` (to the parent): `{ error }` when the app couldn't start.
 //!
@@ -61,9 +62,14 @@ impl Bridge {
     /// Sends every file the editor would download to the parent, tells it when unsaved changes
     /// appear or go away, and hears its files and its answers to the saves.
     pub fn connect(&self, services: &mut Services, inbox: Inbox, saves: Rc<PickerSaves>, ctx: egui::Context) {
+        let handed = saves.clone();
         self.listen(inbox, saves, ctx);
         let bridge = self.clone();
-        services.download = Some(Box::new(move |path: &str, bytes: &[u8]| bridge.post_save(path, bytes)));
+        services.download = Some(Box::new(move |path: &str, bytes: &[u8]| {
+            // The shell notes which revision of the document this was, on the next frame.
+            handed.handed.set(true);
+            bridge.post_save(path, bytes)
+        }));
         let bridge = self.clone();
         let own = services.on_dirty.take();
         services.on_dirty = Some(Box::new(move |dirty| {
@@ -117,13 +123,14 @@ impl Bridge {
                     inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, bytes));
                 }
                 Some("wordcraft:saved") => {
-                    if js_sys::Reflect::get(&data, &JsValue::from_str("ok")).ok().and_then(|ok| ok.as_bool()) != Some(false) {
-                        return;
-                    }
                     let name = string(&data, "name").unwrap_or_default();
-                    let error = string(&data, "error").filter(|e| !e.trim().is_empty()).unwrap_or_else(|| "the page did not say why".to_string());
-                    log::error!("the hosting page could not save {name}: {error}");
-                    saves.refused.borrow_mut().push((name, error));
+                    if js_sys::Reflect::get(&data, &JsValue::from_str("ok")).ok().and_then(|ok| ok.as_bool()) != Some(false) {
+                        saves.confirmed.borrow_mut().push(name);
+                    } else {
+                        let error = string(&data, "error").filter(|e| !e.trim().is_empty()).unwrap_or_else(|| "the page did not say why".to_string());
+                        log::error!("the hosting page could not save {name}: {error}");
+                        saves.refused.borrow_mut().push((name, error));
+                    }
                 }
                 _ => return,
             }

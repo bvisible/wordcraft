@@ -53,7 +53,7 @@ their own `//// Neoffice — added file` header.
   use, so one host page (the Drive of the Suite, NeoDesk's window) drives every Craft editor:
   `wordcraft:ready`, `wordcraft:open` (a file to edit), `wordcraft:save` (every file the editor would
   download), `wordcraft:dirty` and `wordcraft:failed`, plus `wordcraft:saved` (`ok: false` marks the
-  document unsaved again and says why: ours, upstream's bridges have no answer to a save) and
+  document unsaved again and says why, `ok: true` marks it saved again when it has not changed since it was handed over: ours, upstream's bridges have no answer to a save) and
   `?author=` (the name that signs comments). Without `?host=parent` the editor behaves as before.
   Drop it when upstream ships its own bridge for WordCraft, keeping `wordcraft:saved`.
 
