@@ -41,6 +41,11 @@ their own `//// Neoffice — added file` header.
   Her strings are translated outside upstream's catalogs, in the new file
   `crates/ui-egui/src/i18n/neoffice.rs` (French), which `i18n::tr` falls back to (one marked line in
   `crates/ui-egui/src/i18n/mod.rs`).
+  The browser build connects the pane with a `fetch` made with the hosting page's own session
+  (new file `apps/wordcraft-web/src/web/nora.rs`; marked changes in `apps/wordcraft-web/src/web.rs`
+  and the web-sys features of `apps/wordcraft-web/Cargo.toml`, and a re-export in
+  `crates/ui-egui/src/lib.rs`): a page that asks for it with `?nora` or `?nora=<origin>` gets the
+  pane open and connected; every other page behaves exactly as before.
 
 ## Files that cannot carry a comment
 

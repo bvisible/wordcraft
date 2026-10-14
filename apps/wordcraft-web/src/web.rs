@@ -12,6 +12,8 @@ const DOC_EXTS: &[&str] = &["docx", "docm", "dotx", "dotm", "doc", "dot", "odt",
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 const RECIPIENT_EXTS: &[&str] = &["csv", "tsv", "txt", "xlsx", "xlsm", "ods"];
 mod font_store;
+// //// Neoffice — added module: the Nora pane's connection (a `fetch` with the page's own session).
+mod nora;
 const CANVAS_ID: &str = "wordcraft_canvas";
 const LOADING_ID: &str = "wordcraft_loading";
 
@@ -58,7 +60,19 @@ pub fn start() {
                     let doc = if sample { wordcraft_engine::sample::sample_document() } else { wordcraft_engine::blank_document(&region) };
                     let mut session = Session::new(doc);
                     session.system_region = region;
-                    let mut app = WordApp::new(session, services(inbox.clone(), cc.egui_ctx.clone(), dirty, saves.clone()));
+                    let mut services = services(inbox.clone(), cc.egui_ctx.clone(), dirty, saves.clone());
+                    // //// Neoffice — a page that asks for Nora (`?nora`, `?nora=<origin>`) gets the pane, connected
+                    // with the page's own session. The browser build keeps no setting, so the host opens it.
+                    let nora = nora::requested(&query());
+                    if let Some(origin) = &nora {
+                        nora::connect(&mut services, origin.clone(), cc.egui_ctx.clone());
+                    }
+                    let mut app = WordApp::new(session, services);
+                    if nora.is_some()
+                        && let Err(e) = app.execute("ui.nora", serde_json::json!({"value": true}))
+                    {
+                        log::error!("the Nora pane could not be opened: {e}");
+                    }
                     app.autosave = false;
                     // No document to show: start on File › Home, as the desktop app does (#766).
                     if !sample {

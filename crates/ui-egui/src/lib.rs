@@ -170,6 +170,8 @@ pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
 
 // //// Neoffice — answers to the Nora pane's calls, delivered asynchronously by the host like `Inbox`.
 pub type NoraInbox = std::sync::Arc<std::sync::Mutex<Vec<craft_nora::HttpResponse>>>;
+// //// Neoffice — a host that connects the Nora pane makes these calls and delivers these answers.
+pub use craft_nora::{HttpRequest, HttpResponse};
 
 /// UI state that persists between runs (and that agents can read and set).
 #[derive(Clone, Debug, Serialize, Deserialize)]
