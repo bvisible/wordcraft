@@ -154,6 +154,13 @@ pub struct Services {
     pub nora_http: Option<Box<dyn Fn(craft_nora::HttpRequest)>>,
     /// The answers to [`Services::nora_http`], delivered asynchronously by the host.
     pub nora_inbox: Option<NoraInbox>,
+    // //// Neoffice — what a hosting page (the Drive of the Suite, Neodesk's window) changes about the editor: a text
+    // file the person opened is saved as text rather than turned into a Word document, and the links to the upstream
+    // project's community (Discord) are not shown. Both off, as upstream has them, for every other build.
+    /// A document opened from a text file (`.txt`, `.md`) is saved under its own name and in its own format.
+    pub keep_text_format: bool,
+    /// Hide the links to the upstream project's community (Discord).
+    pub hide_community_links: bool,
 }
 
 /// What [`Services::make_default_app`] did.
@@ -714,7 +721,9 @@ impl WordApp {
             }
             // An export is a copy, and so is a save in a format that doesn't keep everything (a
             // page image, plain text): the document itself still has unsaved changes.
-            if matches!(id, "file.save" | "file.saveAs") && keeps_everything(&name) {
+            // //// Neoffice — except a text file a hosting page opened and saves under its own name: the person chose text.
+            let text_in_place = id == "file.save" && self.is_text_saved_in_place(&name);
+            if matches!(id, "file.save" | "file.saveAs") && (keeps_everything(&name) || text_in_place) {
                 self.session.dirty = false;
             }
             return Ok(json!({"downloaded": name, "bytes": bytes.len()}));
@@ -1129,7 +1138,10 @@ impl WordApp {
                 ));
             }
             "ui.discord" => {
-                self.canvas.open_url = Some("https://discord.gg/artcraft".into());
+                // //// Neoffice — nothing to open when the hosting page hides the community links.
+                if self.community_links() {
+                    self.canvas.open_url = Some("https://discord.gg/artcraft".into());
+                }
                 json!({})
             }
             "ui.caretAnimation" => {
@@ -1303,10 +1315,33 @@ impl WordApp {
     /// otherwise .docx.
     fn default_save_name(&self) -> String {
         let ext = self.session.path.as_ref().and_then(|p| p.extension()).map(|e| e.to_string_lossy().to_string());
+        // //// Neoffice — a hosted text file keeps its name and format on Save (`Services::keep_text_format`).
+        if let Some(e) = ext.as_deref().filter(|e| self.keeps_text_format(e)) {
+            return format!("{}.{e}", self.title_stem());
+        }
         match ext {
             Some(e) if wordcraft_engine::io::is_word_package(&e) => format!("{}.{e}", self.title_stem()),
             _ => format!("{}.docx", self.title_stem()),
         }
+    }
+
+    // //// Neoffice — plain-text formats a hosting page saves in place, and whether a save is one of those.
+    fn keeps_text_format(&self, ext: &str) -> bool {
+        self.services.keep_text_format && matches!(ext.to_ascii_lowercase().as_str(), "txt" | "text" | "md" | "markdown")
+    }
+
+    // //// Neoffice — a Save of a document that was opened as a text file, under that file's own name.
+    fn is_text_saved_in_place(&self, name: &str) -> bool {
+        let ext_of = |p: &std::path::Path| p.extension().map(|e| e.to_string_lossy().to_string());
+        match (ext_of(std::path::Path::new(name)), self.session.path.as_deref().and_then(ext_of)) {
+            (Some(saved), Some(opened)) => saved.eq_ignore_ascii_case(&opened) && self.keeps_text_format(&saved),
+            _ => false,
+        }
+    }
+
+    // //// Neoffice — the community links (Discord) are shown unless the hosting page hides them.
+    pub(crate) fn community_links(&self) -> bool {
+        !self.services.hide_community_links
     }
 
     /// The window caption is painted with the semibold interface face (Inter). A file name in a
@@ -3760,6 +3795,73 @@ mod tests {
         let (name, bytes) = got.borrow_mut().pop().unwrap();
         assert_eq!(name, "m.docx");
         assert!(!wordcraft_engine::io::open_bytes(&name, &bytes).unwrap().passthrough.contains_key("word/vbaProject.bin"));
+    }
+
+    // //// Neoffice — a text file opened under a hosting page is saved as text, and the document counts as saved; every
+    // other format still becomes a Word document, and a page that does not host the editor changes nothing.
+    #[test]
+    fn hosted_text_file_is_saved_as_text() {
+        let got: std::rc::Rc<std::cell::RefCell<Vec<(String, Vec<u8>)>>> = Default::default();
+        let sink = got.clone();
+        let services = Services {
+            keep_text_format: true,
+            download: Some(Box::new(move |n: &str, b: &[u8]| {
+                sink.borrow_mut().push((n.to_string(), b.to_vec()));
+                Ok(())
+            })),
+            ..Default::default()
+        };
+        let mut a = WordApp::new(Session::new(wordcraft_doc::Document::from_text("Une ligne de texte")), services);
+        for (opened, expect) in [("Notes.txt", "Notes.txt"), ("NOTES.TXT", "NOTES.TXT"), ("a.md", "a.md"), ("b.markdown", "b.markdown")] {
+            a.session.path = Some(opened.into());
+            a.session.dirty = true;
+            a.run("file.save", json!({})).unwrap();
+            let (name, bytes) = got.borrow_mut().pop().unwrap();
+            assert_eq!(name, expect);
+            assert!(String::from_utf8_lossy(&bytes).contains("Une ligne de texte"), "{opened}: the text itself");
+            assert!(!a.session.dirty, "{opened}: saved under its own name is saved");
+        }
+        // The rest is as upstream has it: a Word document, or another format that turns into one.
+        for (opened, expect) in [("c.html", "c.docx"), ("d.odt", "d.docx"), ("e.docx", "e.docx"), ("f.rtf", "f.docx"), ("g.docm", "g.docm")] {
+            a.session.path = Some(opened.into());
+            a.run("file.save", json!({})).unwrap();
+            assert_eq!(got.borrow_mut().pop().unwrap().0, expect, "{opened}");
+        }
+        // Save As to another name is a copy, not the document: it stays unsaved.
+        a.session.path = Some("Notes.txt".into());
+        a.session.dirty = true;
+        a.run("file.saveAs", json!({"path": "Autre.txt"})).unwrap();
+        assert_eq!(got.borrow_mut().pop().unwrap().0, "Autre.txt");
+        assert!(a.session.dirty);
+
+        // Without the host's setting a text file turns into a Word document, as it always did.
+        let sink = got.clone();
+        let upstream = Services {
+            download: Some(Box::new(move |n: &str, b: &[u8]| {
+                sink.borrow_mut().push((n.to_string(), b.to_vec()));
+                Ok(())
+            })),
+            ..Default::default()
+        };
+        let mut b = WordApp::new(Session::new(wordcraft_doc::Document::from_text("x")), upstream);
+        b.session.path = Some("Notes.txt".into());
+        b.run("file.save", json!({})).unwrap();
+        assert_eq!(got.borrow_mut().pop().unwrap().0, "Notes.docx");
+    }
+
+    // //// Neoffice — the community links (Discord) are there unless the hosting page hides them.
+    #[test]
+    fn community_links_are_hidden_only_when_the_host_says_so() {
+        assert!(app().community_links());
+        let hidden = WordApp::new(Session::new(wordcraft_doc::Document::new()), Services { hide_community_links: true, ..Default::default() });
+        assert!(!hidden.community_links());
+        // The command does nothing, rather than opening the address.
+        let mut hidden = hidden;
+        hidden.run("ui.discord", json!({})).unwrap();
+        assert!(hidden.canvas.open_url.is_none());
+        let mut shown = app();
+        shown.run("ui.discord", json!({})).unwrap();
+        assert_eq!(shown.canvas.open_url.as_deref(), Some("https://discord.gg/artcraft"));
     }
 
     #[test]

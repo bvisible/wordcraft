@@ -62,6 +62,10 @@ impl Bridge {
     /// Sends every file the editor would download to the parent, tells it when unsaved changes
     /// appear or go away, and hears its files and its answers to the saves.
     pub fn connect(&self, services: &mut Services, inbox: Inbox, saves: Rc<PickerSaves>, ctx: egui::Context) {
+        // A page that frames the editor has its own Drive and its own community: a text file is saved as text,
+        // and the upstream project's links are not shown (`Services::keep_text_format`, `hide_community_links`).
+        services.keep_text_format = true;
+        services.hide_community_links = true;
         let handed = saves.clone();
         self.listen(inbox, saves, ctx);
         let bridge = self.clone();

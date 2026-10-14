@@ -57,6 +57,15 @@ their own `//// Neoffice — added file` header.
   `?author=` (the name that signs comments). Without `?host=parent` the editor behaves as before.
   Drop it when upstream ships its own bridge for WordCraft, keeping `wordcraft:saved`.
 
+- **What a hosting page changes about the editor** (`Services::keep_text_format` and
+  `Services::hide_community_links`, both set by `apps/wordcraft-web/src/web/host.rs`, so only when a page frames the
+  editor with `?host=parent`): a document opened from a text file (`.txt`, `.md`) is saved under its own name and in its
+  own format, and counts as saved (upstream turns it into a `.docx` and leaves it unsaved); the links to upstream's
+  community (Discord) are not shown (title bar, Help tab, File menu, About dialog, Options), and the `ui.discord`
+  command does nothing. Marked changes in `crates/ui-egui/src/lib.rs` (the two fields, `default_save_name`, the download
+  branch of `execute`, `ui.discord`, three small functions and two tests), `chrome.rs`, `ribbon.rs`, `backstage.rs`,
+  `dialogs.rs` and `options.rs`. Every other build behaves as before.
+
 ## Files that cannot carry a comment
 
 | File | Why it is ours |
