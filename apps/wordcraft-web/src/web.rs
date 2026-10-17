@@ -72,8 +72,9 @@ pub fn start() {
                         bridge.connect(&mut services, inbox.clone(), saves.clone(), cc.egui_ctx.clone());
                     }
                     // //// Neoffice — a page that asks for Nora (`?nora`, `?nora=<origin>`) gets the pane, connected
-                    // with the page's own session. The browser build keeps no setting, so the host opens it.
-                    let nora = nora::requested(&query());
+                    // with the page's own session. The browser build keeps no setting, so the host opens it. A host
+                    // that makes the calls itself (`wordcraftNoraCall`, Neodesk) turns it on the same way.
+                    let nora = nora::requested(&query()).or_else(|| nora::offered().then(String::new));
                     if let Some(origin) = &nora {
                         nora::connect(&mut services, origin.clone(), cc.egui_ctx.clone());
                     }

@@ -13,6 +13,11 @@
 //! `X-Frappe-CSRF-Token` without being asked. Nothing secret travels in the URL.
 //!
 //! A call that gets no answer from the network comes back as a failure the pane can show.
+//!
+//! A host that makes the calls itself offers `window.wordcraftNoraCall(path, body)`, on the page or on the page of the
+//! same origin that frames it, a promise of `{ status, body }` (`body` is the JSON of the call): the pane is then on
+//! without `?nora`, and every call goes through it. Neodesk does so: it calls with the person's credential, which
+//! neither its page nor the editor ever holds (the same as NeoMail's `mailcraftNoraCall`).
 
 use std::sync::{Arc, Mutex};
 
@@ -31,6 +36,37 @@ pub fn requested(query: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Whether the page, or the page of the same origin that frames it, makes Nora's calls itself (`wordcraftNoraCall`): the
+/// pane is then on, as with `?nora`.
+pub fn offered() -> bool {
+    host_call().is_some()
+}
+
+/// The host's own way to Nora, when it offers one: the window that offers it, and the function.
+fn host_call() -> Option<(JsValue, js_sys::Function)> {
+    let window = web_sys::window()?;
+    let own = JsValue::from(window.clone());
+    let mut windows = vec![own.clone()];
+    if let Ok(Some(parent)) = window.parent() {
+        let parent = JsValue::from(parent);
+        // A top page is its own parent; another origin's `document` can't be read.
+        if parent != own && get(&parent, "document").is_some() {
+            windows.push(parent);
+        }
+    }
+    windows.into_iter().find_map(|w| get(&w, "wordcraftNoraCall").filter(JsValue::is_function).map(|f| (w, js_sys::Function::from(f))))
+}
+
+/// One call made by the host: its answer read as a `fetch`'s (status 0 when it gave none).
+async fn call_host(owner: &JsValue, function: &js_sys::Function, request: &HttpRequest) -> Result<(u16, String), String> {
+    let promise = function.call2(owner, &JsValue::from_str(&request.path), &JsValue::from_str(&request.body.to_string())).map_err(reason)?;
+    let answer = JsFuture::from(js_sys::Promise::resolve(&promise)).await.map_err(reason)?;
+    let status =
+        get(&answer, "status").and_then(|value| value.as_f64()).filter(|status| (0.0..1000.0).contains(status)).map_or(0, |status| status as u16);
+    let body = get(&answer, "body").and_then(|value| value.as_string()).unwrap_or_default();
+    Ok((status, body))
 }
 
 /// Gives the app the means to reach Nora: each call is a `fetch`, each answer is delivered to the pane
@@ -109,6 +145,9 @@ fn reason(error: JsValue) -> String {
 }
 
 async fn fetch(default_origin: &str, request: &HttpRequest) -> Result<(u16, String), String> {
+    if let Some((owner, function)) = host_call() {
+        return call_host(&owner, &function, request).await;
+    }
     let window = web_sys::window().ok_or("no window")?;
     let host = host(&window);
     let origin = host.origin.as_deref().unwrap_or(default_origin).trim_end_matches('/');
