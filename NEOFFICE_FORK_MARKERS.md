@@ -37,15 +37,47 @@ their own `//// Neoffice — added file` header.
   state), `crates/ui-egui/src/panes.rs` (the pane) and `crates/ui-egui/src/options.rs` (the
   checkbox). Without a host connection, which is every build today, the pane says that Nora isn't
   available and offers no text box. With one, what Nora asks for in the document is played through
-  `WordApp::execute` (editing commands only, nothing that reaches a file, one undo step per action).
+  `WordApp::execute`, editing commands only (`refusal` in `nora_pane.rs`): not those that open, save,
+  close or replace a document (the mail merge's included, and a comparison shown in a new document),
+  nor those that are the person's (the
+  interface, the View tab and the view settings and panes of other tabs, their undo history and
+  Repeat, their clipboard (Replace with `^c` included) and the format painter, their searches (a search
+  names its text; the person's Find is put back after each command), Read Aloud, the tools for their next clicks and their
+  pens, macros, their settings, dictionary and fonts), nor one with a parameter that names a file (as
+  text: `path` is also a place in the document) or holds a password, at any depth. A command that asks
+  the interface for a dialog, a file picker or a pane's search box is refused: while the pane plays a
+  command, `WordApp::after_command` hands such requests to the pane instead of acting on them (a
+  marked line in `crates/ui-egui/src/lib.rs`). Nora's commands also run with automation roots that
+  grant no file at all (`AutomationRoots::none`, added in `crates/engine/src/file_access.rs` with its
+  test). An action that fails puts back the document, its undo history and the person's view as they
+  were. The pane's Undo takes back Nora's last change only while the document is still at the revision
+  that change left (`Session::rev`), so it never takes back the person's own work, also after they
+  undid Nora's change and typed; an action that changed nothing answers with `"changed": false` and
+  leaves nothing for the pane's Undo (craft-nora offers no Undo for it from `9d28340` on; the `8fee6ab`
+  pinned today still does). At the undo limit (500 steps) the pane counts Nora's steps with
+  `Session::undo_pushed` and rolls a failed action back with `Session::edit_snapshot_whole`, both added
+  in `crates/engine/src/session.rs` (marked): `undo_depth` stops growing there, and `edit_snapshot`
+  keeps only the oldest four steps.
   Her strings are translated outside upstream's catalogs, in the new file
   `crates/ui-egui/src/i18n/neoffice.rs` (French), which `i18n::tr` falls back to (one marked line in
   `crates/ui-egui/src/i18n/mod.rs`).
   The browser build connects the pane with a `fetch` made with the hosting page's own session
   (new file `apps/wordcraft-web/src/web/nora.rs`; marked changes in `apps/wordcraft-web/src/web.rs`
   and the web-sys features of `apps/wordcraft-web/Cargo.toml`, and a re-export in
-  `crates/ui-egui/src/lib.rs`): a page that asks for it with `?nora` or `?nora=<origin>` gets the
-  pane open and connected; every other page behaves exactly as before.
+  `crates/ui-egui/src/lib.rs`): a page that asks for it with `?nora` gets the pane open and connected
+  to the page's own origin; every other page behaves exactly as before. `?nora=<origin>` is taken only
+  when it is the page's own origin, or a loopback origin from a loopback page (the workshop's stand-in
+  server); any other origin the address names is refused with a console warning, and only the hosting
+  page can name another one (`window.wordcraftNora.origin`). The CSRF token and the headers of
+  `window.wordcraftNora` go only with calls to the page's own origin. The rules are in the new file
+  `apps/wordcraft-web/src/nora_origin.rs`, tested natively; before, a link to an editor with
+  `?nora=https://elsewhere.example` sent the person's messages, what Nora read of the document and the
+  page's CSRF token there.
+- **The URL flags of the browser build read by name** (new file `apps/wordcraft-web/src/flags.rs`,
+  `URLSearchParams`; marked lines in `apps/wordcraft-web/src/web.rs` and `apps/wordcraft-web/src/main.rs`,
+  which builds the two new modules for the native tests too): upstream found `webgl` and `sample`
+  anywhere in the query, so `?author=webgl-fan` forced WebGL2 and `?nora=https://sample.example` opened
+  the sample document.
 - **The host bridge of the browser build** (new file `apps/wordcraft-web/src/web/host.rs`; marked
   changes in `apps/wordcraft-web/src/web.rs`, the web-sys features of `apps/wordcraft-web/Cargo.toml`
   and one line in `crates/ui-egui/src/i18n/neoffice.rs`): the `postMessage` contract of a page that

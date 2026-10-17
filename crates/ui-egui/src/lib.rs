@@ -1004,6 +1004,12 @@ impl WordApp {
             self.canvas.scroll_to_caret = true;
         }
         for req in std::mem::take(&mut self.session.ui_requests) {
+            // //// Neoffice — what a command of Nora's asks of the interface (a dialog, a file picker, a pane's search
+            // box) is the person's to do: the Nora pane keeps the request and refuses the command (`nora_pane::execute`).
+            if let Some(asked) = self.nora.asked.as_mut() {
+                asked.push(req);
+                continue;
+            }
             self.handle_request(&req);
         }
         if let Some(p) = self.session.path.as_ref().map(|p| p.to_string_lossy().to_string())

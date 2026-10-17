@@ -9,6 +9,13 @@
 //! URL flags: `?webgl` forces WebGL2; `?sample` opens the sample document.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+// //// Neoffice — added modules: the page's URL flags, read as parameters by name (flags.rs), and where the Nora pane's
+// calls may go (nora_origin.rs). Their rules are plain Rust, built for the tests as well, so that they are tested natively.
+#[cfg(any(target_arch = "wasm32", test))]
+mod flags;
+#[cfg(any(target_arch = "wasm32", test))]
+mod nora_origin;
+
 #[cfg(target_arch = "wasm32")]
 mod web;
 

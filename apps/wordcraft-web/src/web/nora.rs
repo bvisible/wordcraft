@@ -3,14 +3,18 @@
 //! The Nora pane's connection for the browser build: a `fetch` made with the page's own session.
 //!
 //! Nora lives on the Neoffice server, so the editor needs the session of whoever hosts it. The page
-//! that hosts the editor turns the connection on in its URL: `?nora` (calls go to the page's own
-//! origin, as for an editor served by the instance itself) or `?nora=<origin>` (to another origin).
-//! The pane then opens by itself, as the browser build keeps no setting between visits.
+//! that hosts the editor turns the connection on in its URL with `?nora`: the calls go to the page's
+//! own origin, as for an editor served by the instance itself. The pane then opens by itself, as the
+//! browser build keeps no setting between visits. The address names another origin
+//! (`?nora=<origin>`) only for the workshop's stand-in server, loopback to loopback; any other origin
+//! it names is refused, said in the console, and the page's own is used (`crate::nora_origin` has the
+//! rules), so that a link can't send the person's messages and document elsewhere.
 //!
 //! The host can also describe the connection in `window.wordcraftNora`, read at every call:
-//! `{ origin?: string, headers?: { [name]: value }, credentials?: "include" | "same-origin" | "omit" }`.
-//! A Frappe page's CSRF token (`window.csrf_token` or `frappe.csrf_token`) is sent as
-//! `X-Frappe-CSRF-Token` without being asked. Nothing secret travels in the URL.
+//! `{ origin?: string, headers?: { [name]: value }, credentials?: "include" | "same-origin" | "omit" }`;
+//! its `origin` may be any. A Frappe page's CSRF token (`window.csrf_token` or `frappe.csrf_token`) is
+//! sent as `X-Frappe-CSRF-Token` without being asked; it and the host's `headers` go only with a call
+//! to the page's own origin. Nothing secret travels in the URL.
 //!
 //! A call that gets no answer from the network comes back as a failure the pane can show.
 //!
@@ -25,17 +29,17 @@ use wasm_bindgen::{JsCast as _, JsValue};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use wordcraft_ui_egui::{HttpRequest, HttpResponse, NoraInbox, Services};
 
-/// The origin Nora is asked at when the page asked for her: `""` for the page's own origin. `None`
-/// when the page didn't ask. `query` is the page's `location.search`.
-pub fn requested(query: &str) -> Option<String> {
-    for item in query.trim_start_matches('?').split('&') {
-        let (key, value) = item.split_once('=').unwrap_or((item, ""));
-        if key == "nora" {
-            let decoded = js_sys::decode_uri_component(value).ok().and_then(|text| text.as_string()).unwrap_or_default();
-            return Some(if matches!(decoded.as_str(), "1" | "true") { String::new() } else { decoded });
-        }
-    }
-    None
+/// The origin Nora is asked at when the page's address asks for her (`param`, its `nora` parameter as
+/// the URL flags read it): `""` for the page's own origin, or the loopback origin a loopback page names
+/// (`crate::nora_origin`). `None` when the address doesn't ask. Another origin the address names is
+/// refused, said in the console, and the page's own origin is used.
+pub fn requested(param: Option<&str>) -> Option<String> {
+    let param = param?;
+    let page = web_sys::window().and_then(|window| window.location().origin().ok()).unwrap_or_default();
+    Some(crate::nora_origin::from_param(param, &page).unwrap_or_else(|why| {
+        log::warn!("{why}");
+        String::new()
+    }))
 }
 
 /// Whether the page, or the page of the same origin that frames it, makes Nora's calls itself (`wordcraftNoraCall`): the
@@ -155,11 +159,16 @@ async fn fetch(default_origin: &str, request: &HttpRequest) -> Result<(u16, Stri
     let headers = web_sys::Headers::new().map_err(reason)?;
     headers.set("Content-Type", "application/json").map_err(reason)?;
     headers.set("Accept", "application/json").map_err(reason)?;
-    if let Some(token) = csrf_token(&window) {
-        headers.set("X-Frappe-CSRF-Token", &token).map_err(reason)?;
-    }
-    for (name, value) in &host.headers {
-        headers.set(name, value).map_err(reason)?;
+    // The page's credentials (its CSRF token, the host's headers) go only to the page's own origin: a call to the origin
+    // of `window.wordcraftNora` or to a loopback stand-in goes without them.
+    let page = window.location().origin().unwrap_or_default();
+    if crate::nora_origin::is_page_origin(origin, &page) {
+        if let Some(token) = csrf_token(&window) {
+            headers.set("X-Frappe-CSRF-Token", &token).map_err(reason)?;
+        }
+        for (name, value) in &host.headers {
+            headers.set(name, value).map_err(reason)?;
+        }
     }
     let init = web_sys::RequestInit::new();
     init.set_method("POST");

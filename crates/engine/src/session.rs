@@ -303,6 +303,7 @@ pub struct EditSnapshot {
     evicted: u64,
     /// The oldest undo steps, kept only when the stack is near its limit (the commands that
     /// follow may push them out); at most [`SNAPSHOT_HEAD`].
+    // //// Neoffice — or every undo step, from `edit_snapshot_whole` (the snapshot of the Nora pane).
     head: Vec<Arc<Undo>>,
     redo: Vec<Arc<Undo>>,
     typing_open: bool,
@@ -889,6 +890,13 @@ impl Session {
     pub fn undo_depth(&self) -> usize {
         self.history.len()
     }
+    // //// Neoffice — added: how many undo steps commands took, for the Nora pane (crates/ui-egui/src/nora_pane.rs), also at
+    // the undo limit, where `undo_depth` stays put while each new step drops the oldest.
+    /// Undo steps pushed so far, those the undo limit dropped included: between two readings, the
+    /// steps that commands which only add steps took.
+    pub fn undo_pushed(&self) -> u64 {
+        self.undo_evicted.saturating_add(u64::try_from(self.history.len()).unwrap_or(u64::MAX))
+    }
     pub fn undo_labels(&self) -> Vec<String> {
         self.history.iter().rev().map(|u| u.label.clone()).collect()
     }
@@ -1091,6 +1099,14 @@ impl Session {
             join_next: *join_next,
             dirty: *dirty,
         }
+    }
+
+    // //// Neoffice — added: the snapshot the Nora pane (crates/ui-egui/src/nora_pane.rs) takes before an action of Nora's,
+    // whose batch may push dozens of steps out of a full stack: `edit_snapshot` keeps the oldest SNAPSHOT_HEAD only.
+    /// [`Session::edit_snapshot`] keeping every undo step (a pointer each), so that [`Session::restore`]
+    /// is exact whatever number of steps the commands in between push out of a full stack.
+    pub fn edit_snapshot_whole(&self) -> EditSnapshot {
+        EditSnapshot { head: self.history.clone(), ..self.edit_snapshot() }
     }
 
     /// Put a snapshot back: the commands run since leave no trace in the document, the

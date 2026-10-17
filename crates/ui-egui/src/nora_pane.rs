@@ -14,19 +14,29 @@
 //!
 //! What Nora asks for in the document (`doc_*` actions) is played here, with the vocabulary of
 //! WordCraft's own MCP tools (`execute`, `batch`, `select_text`, `type_text`, `get_text`,
-//! `render_page`, `save_document`) through [`WordApp::execute`], which never opens a dialog. Nora may
-//! run editing commands only: not the commands that open, save or close a document or the
-//! application, not those of the interface (`ui.`), and none that reaches a file of the computer by
-//! a `path`. An action that fails leaves the document as it was, and what she changed can be undone a
-//! whole action at a time.
+//! `render_page`, `save_document`) through [`WordApp::execute`]. Nora may run editing commands only
+//! ([`refusal`] says which she may not): not those that open, save, close or replace a document or
+//! the application; not those that are the person's (the interface, their view, panes and windows,
+//! their undo history, their clipboard, their searches, Read Aloud, the tools for their next clicks,
+//! macros, their settings, dictionary and fonts); none that would ask the person something (a
+//! dialog, a file picker); none that reaches a file of the computer or carries a password. An action
+//! that fails leaves the document as it was, its undo history included. What she changed can be
+//! undone a whole action at a time, and only while the document is still as her change left it: the
+//! pane's Undo never takes back the person's own work. An action that changed nothing says so
+//! (`"changed": false`) and leaves nothing for the pane's Undo; craft-nora offers no Undo for it from
+//! 9d28340 on (the revision `Cargo.toml` pins today still counts it: the pane's Undo then takes back
+//! Nora's last change, if the document is still as it left it, or says there is nothing to undo).
 
 use craft_nora::{
-    AppKind, CommandCall, CommandPolicy, DocActionKind, DocumentInfo, HttpRequest, HttpResponse, Input, NoraSession, Output, PageContext, Selection,
-    SessionConfig,
+    AppKind, CommandCall, CommandPolicy, Decision, DocActionKind, DocumentInfo, HttpRequest, HttpResponse, Input, NoraSession, Output, PageContext,
+    Selection, SessionConfig,
 };
 use craft_nora_ui::{NoraLabels, NoraPanel, NoraStyle, PanelAction, drive};
 use egui::Ui;
 use serde_json::{Value, json};
+use wordcraft_doc::props::CharProps;
+use wordcraft_engine::file_access::{self, AutomationRoots};
+use wordcraft_engine::{EditSnapshot, ViewState};
 
 use crate::WordApp;
 use crate::control::{ControlRequest, Outcome};
@@ -38,30 +48,123 @@ const MAX_SELECTION_CHARS: usize = 2_000;
 /// The most characters of the document told to Nora when she reads it.
 const MAX_OBSERVED_CHARS: usize = 50_000;
 
-/// Parameter names that would reach a file of the computer. A command given one is refused.
-const FILE_KEYS: &[&str] = &["path", "paths", "file", "files", "filename", "folder", "directory", "dir"];
+/// Parameter names that reach a file of the computer when they hold its name, as text: a command
+/// given one is refused. `path` also names a place in the document (a position's paragraph,
+/// `{"path": [0, 2], "off": 3}`, or a place in an equation), a list of numbers that reaches no file;
+/// `original` is the original document of a comparison. `dir` is no folder: it is a direction (Text
+/// Direction, moving in an equation), and no command of WordCraft reads a folder by `dir`.
+const FILE_KEYS: &[&str] = &["path", "paths", "file", "files", "filename", "folder", "directory", "original"];
 
-/// What Nora may play in a WordCraft document: the editing commands. Not those that open, save or
-/// close a document or the application (the default policy), and not those of the interface itself
-/// (`ui.`: dialogs, settings, links), which belong to the user.
+/// The command families the conversation refuses before an action reaches the pane, besides the
+/// default policy's (`file.`, `app.`), as `CommandPolicy` takes them (prefixes): the interface
+/// (`ui.`); the person's view, panes and windows (the View tab); their undo history (`edit.undo`,
+/// `edit.undoTo` and `edit.undoHistory`, `edit.redo`: they would take back the person's own work, and
+/// the pane's Undo would then take theirs back as Nora's); and Read Aloud, which plays the document
+/// through the computer's speech program.
+const REFUSED_FAMILIES: &[&str] = &["ui.", "view.", "edit.undo", "edit.redo", "review.readAloud", "readAloud."];
+
+/// The other commands that are the person's rather than the document's, refused whatever their
+/// parameters; an entry ending in `*` stands for every command whose id it starts.
+const THE_PERSON_S: &[&str] = &[
+    // Their view and panes, set from another tab than View.
+    "table.viewGridlines",
+    "styles.pane",
+    "styles.inspector",
+    "smartArt.textPane",
+    "edit.clipboardPane",
+    "review.markup",
+    "review.showMarkup",
+    "review.trackingOptions",
+    "review.proofing",
+    "review.hideInk",
+    "fields.toggleCode",
+    "developer.designMode",
+    "draw.replay",
+    "outline.expand",
+    "outline.collapse",
+    "outline.toggle",
+    "outline.showLevel*",
+    "outline.showAll",
+    "outline.firstLineOnly",
+    "outline.showFormatting",
+    "outline.close",
+    // Repeat, which runs the person's last command again, out of this pane's sight.
+    "edit.repeat",
+    // Their clipboard and its pane, and the formatting the format painter holds for them.
+    "edit.copy",
+    "edit.cut",
+    "edit.clipboardItems",
+    "edit.pasteClipboardItem",
+    "edit.pasteAllClipboard",
+    "edit.deleteClipboardItem",
+    "edit.clearClipboard",
+    "edit.copyFormat",
+    "edit.pasteFormat",
+    "edit.formatPainter",
+    // The tools that take their next clicks, and their pens.
+    "draw.pen",
+    "draw.pencil",
+    "draw.highlighter",
+    "draw.select",
+    "draw.addPen",
+    "draw.removePen",
+    "draw.inkToShape",
+    // Macros, whose steps run out of this pane's sight (a step that saves a file, one that undoes the
+    // person's work).
+    "tools.macros",
+    "tools.recordMacro",
+    // Their settings, their dictionary (kept in a file of the computer) and the fonts they added (kept
+    // with the app).
+    "text.overtype",
+    "tools.autocorrect",
+    "tools.customizeKeyboard",
+    "tools.customizeRibbon",
+    "review.addToDictionary",
+    "review.ignoreAll",
+    "font.add",
+    "font.remove",
+];
+
+/// What Nora may play in a WordCraft document, as far as the conversation decides it: everything but
+/// the default policy's files and application and the [`REFUSED_FAMILIES`]. The pane refuses the rest
+/// of what is the person's itself ([`refusal`]).
 fn policy() -> CommandPolicy {
-    CommandPolicy::default().deny_prefix("ui.")
+    REFUSED_FAMILIES.iter().fold(CommandPolicy::default(), |policy, family| policy.deny_prefix(*family))
 }
 
-/// What the pane keeps between frames: the conversation and the panel that draws it.
+/// What the pane keeps between frames: the conversation, the panel that draws it, and what Nora
+/// changed.
 pub struct NoraState {
     session: NoraSession,
     panel: NoraPanel,
-    /// How many undo steps each change Nora made took, the newest last, so that Undo takes back a whole
-    /// action (a batch is several steps).
-    undo_steps: Vec<usize>,
+    /// Nora's changes that the pane's Undo can take back, the newest last.
+    changes: Vec<Change>,
+    /// While the pane plays a command of Nora's: what the command asked of the interface (a dialog, a
+    /// file picker, a pane's search box). [`WordApp`] keeps its requests here instead of acting on them,
+    /// and the pane refuses the command ([`execute`]).
+    pub(crate) asked: Option<Vec<Value>>,
+}
+
+/// One change of Nora's: the document it was made in, the undo steps it took there, and the
+/// document's revision when it began and once it was made.
+struct Change {
+    document: u64,
+    steps: usize,
+    /// The revision ([`wordcraft_engine::Session::rev`], which every edit, undo and redo moves on)
+    /// when the change began: the change made just before ended there when nothing came between them.
+    before: u64,
+    /// The revision once the change was made (or once the pane took back the change made right after
+    /// it, or an action that failed right after it): the pane's Undo takes the change back only while
+    /// the document is still at it. A count of steps alone can't tell: the person's own Undo puts back
+    /// the very document one of Nora's steps restores, and the step of their next edit restores it too.
+    after: u64,
 }
 
 impl Default for NoraState {
     fn default() -> Self {
         let context = PageContext::editor(AppKind::Word, DocumentInfo::named(""));
         let config = SessionConfig { policy: policy(), ..SessionConfig::default() };
-        NoraState { session: NoraSession::new(config, context), panel: NoraPanel::new(), undo_steps: Vec::new() }
+        NoraState { session: NoraSession::new(config, context), panel: NoraPanel::new(), changes: Vec::new(), asked: None }
     }
 }
 
@@ -114,29 +217,100 @@ fn perform(app: &mut WordApp, outputs: Vec<Output>, ctx: &egui::Context) {
     }
 }
 
-/// Plays one action of Nora in the open document. A change is remembered by the number of undo steps
-/// it took; a change that fails is taken back, so a failed action leaves the document as it was.
+/// Plays one action of Nora in the open document. One that can change it (a command, a batch, typing)
+/// is played against a snapshot of the document, its selection, its undo history and the person's
+/// view: when the action fails, all of them go back to the snapshot, so a failed action leaves the
+/// document as it was. One that changed something is remembered for the pane's Undo, with the undo
+/// steps it took and the revision it left; one that changed nothing (no undo step, the revision it
+/// started from) answers with `"changed": false`, for which craft-nora (9d28340 on) leaves nothing to
+/// undo.
 fn run_document(app: &mut WordApp, ctx: &egui::Context, kind: &DocActionKind) -> Result<Value, String> {
+    if !kind.modifies() {
+        return apply(app, ctx, kind);
+    }
     // Typing is one undo step until something else happens: close the user's group first, so that what
     // Nora does steps on its own and neither joins the user's typing nor is joined by it.
-    if kind.modifies() {
-        app.session.close_typing();
-    }
-    let before = app.session.undo_depth();
+    app.session.close_typing();
+    let before = Before::take(app);
     let result = apply(app, ctx, kind);
-    if kind.modifies() {
-        app.session.close_typing();
-        match &result {
-            Ok(_) => app.nora.undo_steps.push(app.session.undo_depth().saturating_sub(before)),
-            Err(_) => {
-                let added = app.session.undo_depth().saturating_sub(before);
-                if added > 0 {
-                    app.session.undo_steps(added);
-                }
+    app.session.close_typing();
+    match result {
+        Ok(value) => {
+            let steps = usize::try_from(app.session.undo_pushed().saturating_sub(before.pushed)).unwrap_or(usize::MAX);
+            let after = app.session.rev();
+            if steps == 0 && after == before.rev && app.session.document_id() == before.document {
+                return Ok(unchanged(value));
             }
+            app.nora.changes.push(Change { document: before.document, steps, before: before.rev, after });
+            Ok(value)
+        }
+        Err(error) => {
+            before.restore(app);
+            Err(error)
         }
     }
-    result
+}
+
+/// The answer of an action that changed nothing: its result with `"changed": false` (craft-nora, from
+/// 9d28340 on, then leaves nothing to undo for it). An object carries the mark itself; any other result, a batch's
+/// list for one, goes under `result`.
+fn unchanged(value: Value) -> Value {
+    match value {
+        Value::Object(mut map) => {
+            map.insert("changed".into(), Value::Bool(false));
+            Value::Object(map)
+        }
+        other => json!({"result": other, "changed": false}),
+    }
+}
+
+/// The document as it was before an action of Nora's, to go back to when the action fails.
+struct Before {
+    document: u64,
+    rev: u64,
+    /// [`wordcraft_engine::Session::undo_pushed`]: what the action adds to it is the undo steps it took,
+    /// also at the undo limit.
+    pushed: u64,
+    /// Every undo step is kept: a batch may push many out of a full history.
+    snapshot: EditSnapshot,
+    view: ViewState,
+    /// The formatting waiting at the caret for the person's next typing (Bold with nothing selected).
+    pending: Option<CharProps>,
+}
+
+impl Before {
+    fn take(app: &WordApp) -> Before {
+        let s = &app.session;
+        Before {
+            document: s.document_id(),
+            rev: s.rev(),
+            pushed: s.undo_pushed(),
+            snapshot: s.edit_snapshot_whole(),
+            view: s.view.clone(),
+            pending: s.pending.clone(),
+        }
+    }
+
+    /// Puts the document back as it was, with its selection, its undo history, the person's view and
+    /// the formatting waiting at their caret: the person's Redo comes back too, and no step of the failed
+    /// action is left to undo or redo. (No command Nora may play takes undo steps off or replaces the
+    /// document, so the snapshot comes back exactly.) A change of Nora's that had left the document so is
+    /// the newest thing in it again.
+    fn restore(self, app: &mut WordApp) {
+        if app.session.document_id() != self.document {
+            return;
+        }
+        app.session.restore(self.snapshot);
+        app.session.view = self.view;
+        app.session.pending = self.pending;
+        let now = app.session.rev();
+        if let Some(previous) = app.nora.changes.last_mut()
+            && previous.document == self.document
+            && previous.after == self.rev
+        {
+            previous.after = now;
+        }
+    }
 }
 
 fn apply(app: &mut WordApp, ctx: &egui::Context, kind: &DocActionKind) -> Result<Value, String> {
@@ -152,23 +326,175 @@ fn apply(app: &mut WordApp, ctx: &egui::Context, kind: &DocActionKind) -> Result
     }
 }
 
-/// One command of Nora's, unless it would reach a file of the computer.
+/// One command of Nora's, unless [`refusal`] says it is not hers to play. It runs with no file of the
+/// computer within reach (automation roots that grant nothing are in force, whatever its parameters
+/// are called), and what it asks of the interface is kept instead of done: a command that would open
+/// a dialog or a file picker, or put the person's typing in a pane's search box, needs the person, and
+/// is refused (the caller takes back what it did). It searches with Find's defaults, and the person's
+/// Find is as they left it afterwards.
 fn execute(app: &mut WordApp, command: &str, params: &Value) -> Result<Value, String> {
-    if let Some(key) = file_key(params) {
-        return Err(format!("`{command}` is refused: `{key}` would reach a file of the computer"));
+    if let Some(why) = refusal(command, params) {
+        return Err(why);
     }
-    app.execute(command, params.clone())
+    app.nora.asked = Some(Vec::new());
+    // The person's Find (what they searched for, their Replace with text, their options) stays theirs: Nora's command
+    // starts from Find's defaults (the person's regular expressions or Match case don't change what her text means),
+    // and theirs is put back after it.
+    let find = std::mem::take(&mut app.session.find);
+    let no_files = AutomationRoots::none();
+    let result = file_access::confine(Some(&no_files), || app.execute(command, params.clone()));
+    app.session.find = find;
+    let asked = app.nora.asked.take().unwrap_or_default();
+    if let Some(what) = asked.iter().find_map(needs_the_person) {
+        return Err(format!("`{command}` is refused: it needs the person, as it would {what}"));
+    }
+    result
 }
 
-/// The first parameter name, at any depth, that would reach a file.
-fn file_key(params: &Value) -> Option<String> {
-    match params {
-        Value::Object(map) => map
-            .iter()
-            .find_map(|(key, value)| if FILE_KEYS.contains(&key.to_ascii_lowercase().as_str()) { Some(key.clone()) } else { file_key(value) }),
-        Value::Array(list) => list.iter().find_map(file_key),
+/// Why Nora may not play `id` with `params`, when she may not: a command that is the person's
+/// ([`is_the_person_s`], [`the_person_s_with`]), one that would replace the document open, and one given
+/// a parameter that names a file of the computer or holds a password ([`forbidden_key`]). The
+/// conversation refuses the [`REFUSED_FAMILIES`] already; this is asked of every command the pane
+/// plays, one of a batch too.
+fn refusal(id: &str, params: &Value) -> Option<String> {
+    if is_the_person_s(id) {
+        return Some(format!("`{id}` is refused: it is the person's, not the document's"));
+    }
+    if let Some(why) = the_person_s_with(id, params) {
+        return Some(format!("`{id}` is refused: {why}"));
+    }
+    if replaces_the_document(id, params) {
+        return Some(format!("`{id}` is refused: it would replace the document open, the one Nora edits"));
+    }
+    forbidden_key(params).map(|(key, why)| format!("`{id}` is refused: `{key}` {why}"))
+}
+
+/// Whether `id` would replace the document open, or make it another one: the commands that open, make or
+/// close one (New, Open, Close, the mail merge's new documents: `switches_document`), and a comparison
+/// shown in a new document, which turns the one open into an untitled one, its file forgotten.
+fn replaces_the_document(id: &str, params: &Value) -> bool {
+    let compared_elsewhere = || params.get("showIn").and_then(Value::as_str).unwrap_or("original") != "original";
+    crate::switches_document(id, params) || (matches!(id, "review.compare" | "review.combine") && compared_elsewhere())
+}
+
+/// Whether `id` is the person's whatever its parameters: of the default policy's families or of the
+/// [`REFUSED_FAMILIES`], or one of [`THE_PERSON_S`].
+fn is_the_person_s(id: &str) -> bool {
+    policy().check(id) == Decision::Deny
+        || THE_PERSON_S.iter().any(|entry| match entry.strip_suffix('*') {
+            Some(prefix) => id.starts_with(prefix),
+            None => id == *entry,
+        })
+}
+
+/// What makes `id` the person's with these parameters, when they do. Each test reads the parameters as
+/// the command itself does: a parameter that is there (even `null`), one that is text, one that is a
+/// boolean.
+fn the_person_s_with(id: &str, params: &Value) -> Option<&'static str> {
+    let present = |key: &str| params.get(key).is_some();
+    let given = |key: &str| params.get(key).is_some_and(|value| !value.is_null());
+    let text = |key: &str| params.get(key).and_then(Value::as_str).is_some();
+    let words = |key: &str| params.get(key).and_then(Value::as_str).is_some_and(|text| !text.is_empty());
+    if pastes_the_clipboard(id, params) {
+        return Some("it would paste the person's clipboard: give it what to paste, as text");
+    }
+    match id {
+        // Without a place to work on, these pick up a tool for the person's next clicks.
+        "draw.eraser" if !["page", "x", "y"].into_iter().any(present) => Some("without a point, it hands the person the eraser"),
+        "draw.lasso" if params.get("clear").and_then(Value::as_bool) != Some(true) && !present("points") => {
+            Some("without points, it hands the person the lasso")
+        }
+        "table.draw" | "table.eraser" if !present("page") => Some("without a page, it hands the person the table pen"),
+        // Without a style, Apply Styles only shows the person's Styles pane.
+        "styles.apply" if !present("style") => Some("without a style, it only shows the person's Styles pane"),
+        // These parameters are the person's settings.
+        "review.wordCount" if given("includeTextBoxes") => Some("`includeTextBoxes` is the person's setting for counting words"),
+        "review.language" if given("detect") => Some("`detect` is the person's setting"),
+        // Without the template's bytes, the template the document names is read from the computer.
+        "tools.updateStyles" if !text("data") => Some("without `data`, it would read the attached template, a file of the computer"),
+        // Replace with `^c` is the person's clipboard; without `with` or `text`, Replace uses what they typed last
+        // in Find and Replace.
+        "edit.replace" | "edit.replaceAll" if params.get("with").and_then(Value::as_str).is_some_and(|with| with.contains("^c")) => {
+            Some("`^c` in `with` is the person's clipboard")
+        }
+        "edit.replace" | "edit.replaceAll" if !text("with") || !words("text") => {
+            Some("without `text` and `with`, it would replace what the person last searched for, or with what they last typed")
+        }
+        // A search without its text searches for what the person searched for last, and selects it.
+        "edit.find" | "edit.findNext" | "edit.findPrevious" | "edit.advancedFind" if !words("text") => {
+            Some("without `text`, it would search for what the person searched for last")
+        }
+        // Reading Highlight marks the matches in the person's view.
+        "edit.advancedFind" if present("highlight") => Some("`highlight` changes the person's view"),
         _ => None,
     }
+}
+
+/// Whether a paste takes what it pastes from the person's clipboard, as the paste commands read their
+/// parameters: unless Nora gives it, as text that is not empty, in a parameter the command pastes from (Paste and Merge
+/// Formatting: `text`, `html` or `rtf`; Keep Text Only: `text`; Paste Special: the chosen format's own,
+/// `text` standing in for HTML and RTF, and `picture` for a picture, which the command would otherwise
+/// answer with what the person's clipboard holds). Paste Special's Keep Source Formatting is the person's
+/// own copy whatever is given, and without a format it lists what their clipboard holds.
+fn pastes_the_clipboard(id: &str, params: &Value) -> bool {
+    let text = |key: &str| params.get(key).and_then(Value::as_str).is_some_and(|text| !text.is_empty());
+    match id {
+        "edit.paste" | "edit.pasteMerge" => !(text("text") || text("html") || text("rtf")),
+        "edit.pasteText" => !text("text"),
+        "edit.pasteSpecial" => match params.get("as").and_then(Value::as_str).map(str::to_ascii_lowercase).as_deref() {
+            Some("text" | "unformatted" | "plain") => !text("text"),
+            Some("html") => !(text("html") || text("text")),
+            Some("rtf") => !(text("rtf") || text("text")),
+            Some("picture" | "png" | "image") => !text("picture"),
+            Some("formatted" | "keep" | "wordcraft") | None => true,
+            // An unknown format: the command answers with an error that says nothing of the clipboard.
+            Some(_) => false,
+        },
+        _ => false,
+    }
+}
+
+/// The first parameter, at any depth, that Nora may not give, and why: one of [`FILE_KEYS`] holding
+/// text (a file's name), or a password (`password`, `newPassword`…), which would lock the person out of
+/// their own document with a password they never chose, or try one they gave nobody.
+fn forbidden_key(params: &Value) -> Option<(String, &'static str)> {
+    match params {
+        Value::Object(map) => map.iter().find_map(|(key, value)| {
+            let lowered = key.to_ascii_lowercase();
+            if FILE_KEYS.contains(&lowered.as_str()) && holds_text(value) {
+                Some((key.clone(), "would reach a file of the computer"))
+            } else if lowered.contains("password") {
+                Some((key.clone(), "is a password, and passwords are the person's"))
+            } else {
+                forbidden_key(value)
+            }
+        }),
+        Value::Array(list) => list.iter().find_map(forbidden_key),
+        _ => None,
+    }
+}
+
+/// Whether `value` holds text anywhere: a file's name does, a place in the document (numbers) doesn't.
+fn holds_text(value: &Value) -> bool {
+    match value {
+        Value::String(_) => true,
+        Value::Array(list) => list.iter().any(holds_text),
+        Value::Object(map) => map.values().any(holds_text),
+        _ => false,
+    }
+}
+
+/// What a request a command made of the interface would have done, when it needs the person: anything
+/// but scrolling to the caret.
+fn needs_the_person(request: &Value) -> Option<String> {
+    if request.get("scrollTo").is_some() {
+        return None;
+    }
+    Some(match (request.get("open").and_then(Value::as_str), request.get("focus").and_then(Value::as_str)) {
+        (Some(what), _) => format!("open `{what}` in front of the person (a dialog, a page of the File menu or a file picker)"),
+        (None, Some(what)) => format!("put the person's typing in `{what}`"),
+        (None, None) => format!("ask the interface for {request}"),
+    })
 }
 
 /// Several commands in order. The first that fails ends the batch with an error, and the caller takes
@@ -242,15 +568,33 @@ fn render_page(app: &mut WordApp, ctx: &egui::Context, page: u32, scale: f64) ->
     }
 }
 
-/// Takes back the last change Nora made, whole.
+/// Takes back the last change Nora made, whole, while the document is still as that change left it
+/// (its revision): when the person changed the document since, or undid the change, the pane leaves
+/// their work alone and says to use the editor's Undo. Refused, it forgets every change of Nora's, as
+/// craft-nora does from 9d28340 on: the older ones lie under the person's edit too. Done, the change made just
+/// before, when nothing came between the two, is the newest thing in the document again.
 fn undo(app: &mut WordApp) -> Result<Value, String> {
-    let Some(steps) = app.nora.undo_steps.pop() else {
-        return Err("there is nothing of Nora's to undo".to_string());
+    let Some(change) = app.nora.changes.pop() else {
+        return Err(tl!("There is nothing of Nora's to undo.").to_string());
     };
-    if steps == 0 {
-        return Ok(json!({"undone": 0}));
+    if app.session.document_id() != change.document || app.session.rev() != change.after {
+        app.nora.changes.clear();
+        return Err(tl!("You changed the document after Nora did: use the editor's Undo instead.").to_string());
     }
-    app.execute("edit.undoTo", json!({"count": steps}))
+    if change.steps > 0
+        && let Err(error) = app.execute("edit.undoTo", json!({"count": change.steps}))
+    {
+        app.nora.changes.clear();
+        return Err(error);
+    }
+    let now = app.session.rev();
+    if let Some(previous) = app.nora.changes.last_mut()
+        && previous.document == change.document
+        && previous.after == change.before
+    {
+        previous.after = now;
+    }
+    Ok(json!({"undone": change.steps}))
 }
 
 /// Hands one call to the host. Without a connection the call fails at once, as an unavailable server.
@@ -594,7 +938,7 @@ mod tests {
     fn undo_takes_back_a_whole_batch_and_only_what_nora_did() {
         let mut a = app(Services::default());
         type_in(&mut a, "mine ");
-        a.nora.undo_steps.clear();
+        a.nora.changes.clear();
         let commands = vec![
             CommandCall { command: "text.insert".into(), params: json!({"text": "a"}) },
             CommandCall { command: "text.newParagraph".into(), params: json!({}) },
@@ -612,7 +956,7 @@ mod tests {
     fn a_failing_batch_leaves_the_document_as_it_was() {
         let mut a = app(Services::default());
         type_in(&mut a, "before");
-        let remembered = a.nora.undo_steps.len();
+        let remembered = a.nora.changes.len();
         let commands = vec![
             CommandCall { command: "text.insert".into(), params: json!({"text": " and more"}) },
             CommandCall { command: "no.such.command".into(), params: json!({}) },
@@ -620,7 +964,7 @@ mod tests {
         let error = run(&mut a, DocActionKind::Batch { commands }).unwrap_err();
         assert!(error.contains("no.such.command"), "{error}");
         assert_eq!(text_of(&mut a), "before", "the command that ran was taken back");
-        assert_eq!(a.nora.undo_steps.len(), remembered, "and nothing new is left to undo");
+        assert_eq!(a.nora.changes.len(), remembered, "and nothing new is left to undo");
     }
 
     #[test]
@@ -643,6 +987,553 @@ mod tests {
         assert_eq!(policy.check("ui.dialog"), Decision::Deny);
         assert_eq!(policy.check("file.saveAs"), Decision::Deny);
         assert_eq!(policy.check("app.quit"), Decision::Deny);
+        // The person's view and windows, their undo history and Read Aloud: refused by the conversation already.
+        for id in [
+            "view.darkMode",
+            "view.zoom",
+            "view.newWindow",
+            "view.split",
+            "edit.undo",
+            "edit.undoTo",
+            "edit.redo",
+            "review.readAloud",
+            "readAloud.playPause",
+        ] {
+            assert_eq!(policy.check(id), Decision::Deny, "{id}");
+        }
+        for id in ["text.insert", "edit.paste", "edit.replaceAll", "review.newComment", "table.insertRowBelow"] {
+            assert_eq!(policy.check(id), Decision::Allow, "{id}");
+        }
+    }
+
+    /// Read Aloud plays the document through the computer's speech program: its commands are the person's, refused
+    /// by the conversation before they reach the pane. (Never run here: on a desktop they would speak.)
+    #[test]
+    fn nora_never_plays_the_document_aloud() {
+        use craft_nora::Decision;
+        let policy = policy();
+        for id in ["review.readAloud", "readAloud.playPause", "readAloud.next", "readAloud.previous", "readAloud.stop", "readAloud.speed"] {
+            assert_eq!(policy.check(id), Decision::Deny, "{id}");
+        }
+    }
+
+    /// One command of Nora's, as the conversation hands it to the pane.
+    fn play(app: &mut WordApp, command: &str, params: Value) -> Result<Value, String> {
+        run(app, DocActionKind::Execute { command: command.into(), params })
+    }
+
+    /// Nora's command is refused, and says so.
+    fn refused(app: &mut WordApp, command: &str, params: Value) -> String {
+        let error = play(app, command, params).map(|v| v.to_string()).unwrap_err();
+        assert!(error.contains("refused"), "{command}: {error}");
+        error
+    }
+
+    /// Nora can't take back the person's work: her `edit.undo` and `edit.undoTo`, alone or in a batch, are refused
+    /// before anything runs (the pane's Undo would then take back the person's own edit as Nora's).
+    #[test]
+    fn nora_never_undoes_the_person_s_work() {
+        let (services, outbox, inbox) = connected();
+        let mut a = app(services);
+        a.run("ui.nora", json!({"value": true})).unwrap();
+        a.run("text.insert", json!({"text": "mine"})).unwrap();
+        let mut h = harness(a);
+        h.state_mut().nora.panel.set_draft("Tidy up");
+        h.run_steps(2);
+        h.get_by_label("Send").click();
+        h.run_steps(4);
+        answer(&inbox, &take(&outbox)[0], json!({"thread_id": "t1"}));
+        h.run_steps(6);
+        let polls = take(&outbox);
+        let actions = polls.iter().find(|r| r.path.ends_with("get_browser_actions")).expect("the actions are read");
+        let asked = json!({"actions": [
+            {"action": "doc_batch", "commands": [{"command": "text.insert", "params": {"text": " and Nora's"}}, {"command": "edit.undo"}], "callback_id": "c1"},
+            {"action": "doc_execute", "command": "edit.undo", "callback_id": "c2"},
+            {"action": "doc_execute", "command": "edit.undoTo", "params": {"count": 1}, "callback_id": "c3"}
+        ]});
+        answer(&inbox, actions, asked);
+        h.run_steps(4);
+        let told = take(&outbox);
+        for callback in ["c1", "c2", "c3"] {
+            let observation =
+                told.iter().find(|r| r.path.ends_with("receive_observation") && r.body["callback_id"] == callback).expect("Nora gets an answer");
+            assert_eq!(observation.body["observation"]["ok"], false, "{callback}");
+            assert!(observation.body["observation"]["error"].as_str().unwrap_or_default().contains("refused"), "{callback}");
+        }
+        assert_eq!(text_of(h.state_mut()), "mine", "nothing ran: the person's typing is still there");
+    }
+
+    /// Nora's Redo would bring back what the person took back: refused.
+    #[test]
+    fn nora_s_redo_never_brings_back_what_the_person_undid() {
+        let mut a = app(Services::default());
+        a.run("text.insert", json!({"text": "mine"})).unwrap();
+        a.run("edit.undo", json!({})).unwrap();
+        refused(&mut a, "edit.redo", json!({}));
+        assert_eq!(text_of(&mut a), "", "the person's Undo stands");
+        assert!(a.session.can_redo(), "and their Redo is still theirs");
+    }
+
+    /// What the person types after Nora's change is theirs: the pane's Undo leaves it, and Nora's change, alone.
+    #[test]
+    fn undo_leaves_the_person_s_later_typing_alone() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Nora's");
+        a.run("text.insert", json!({"text": " mine"})).unwrap();
+        let error = run(&mut a, DocActionKind::Undo).map(|v| v.to_string()).unwrap_err();
+        assert!(error.contains("Undo"), "{error}");
+        assert_eq!(text_of(&mut a), "Nora's mine", "nothing is undone");
+    }
+
+    /// The person undoes Nora's change, then types: the undo step of their typing then holds the very document Nora's
+    /// change started from, so a count of steps can't tell it from hers. The document's revision does: refused.
+    #[test]
+    fn undo_never_takes_back_the_person_s_edit_after_their_own_undo() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Nora's");
+        a.run("edit.undo", json!({})).unwrap();
+        a.run("text.insert", json!({"text": "mine"})).unwrap();
+        assert!(run(&mut a, DocActionKind::Undo).is_err());
+        assert_eq!(text_of(&mut a), "mine", "the person's typing stays");
+    }
+
+    #[test]
+    fn undo_takes_back_nora_s_changes_one_after_the_other_but_never_past_the_person() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "one");
+        type_in(&mut a, " two");
+        run(&mut a, DocActionKind::Undo).unwrap();
+        assert_eq!(text_of(&mut a), "one");
+        run(&mut a, DocActionKind::Undo).unwrap();
+        assert_eq!(text_of(&mut a), "", "two changes in a row, both taken back");
+        // Between two changes of Nora's, the person undoes the first and types: the first stays theirs to undo.
+        type_in(&mut a, "first");
+        a.run("edit.undo", json!({})).unwrap();
+        a.run("text.insert", json!({"text": "mine"})).unwrap();
+        type_in(&mut a, " second");
+        run(&mut a, DocActionKind::Undo).unwrap();
+        assert_eq!(text_of(&mut a), "mine", "the newest change is taken back");
+        assert!(run(&mut a, DocActionKind::Undo).is_err(), "the older one is behind the person's edit");
+        assert_eq!(text_of(&mut a), "mine");
+    }
+
+    #[test]
+    fn a_failed_action_keeps_the_change_before_it_undoable() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Nora's");
+        let commands = vec![
+            CommandCall { command: "text.insert".into(), params: json!({"text": " more"}) },
+            CommandCall { command: "no.such.command".into(), params: json!({}) },
+        ];
+        assert!(run(&mut a, DocActionKind::Batch { commands }).is_err());
+        assert_eq!(text_of(&mut a), "Nora's");
+        run(&mut a, DocActionKind::Undo).unwrap();
+        assert_eq!(text_of(&mut a), "");
+    }
+
+    /// An action of Nora's that fails leaves the person's undo history as it was, their Redo included: the step it took
+    /// before failing was not left there to redo, in place of theirs.
+    #[test]
+    fn a_failing_action_leaves_the_person_s_redo_as_it_was() {
+        let mut a = app(Services::default());
+        a.run("text.insert", json!({"text": "mine"})).unwrap();
+        a.run("edit.undo", json!({})).unwrap();
+        let commands = vec![
+            CommandCall { command: "text.insert".into(), params: json!({"text": "Nora's"}) },
+            CommandCall { command: "no.such.command".into(), params: json!({}) },
+        ];
+        assert!(run(&mut a, DocActionKind::Batch { commands }).is_err());
+        assert_eq!(text_of(&mut a), "");
+        a.run("edit.redo", json!({})).unwrap();
+        assert_eq!(text_of(&mut a), "mine", "the person's Redo brings back what they undid");
+    }
+
+    /// At the undo limit (each new step drops the oldest), a long batch of Nora's that fails still leaves the person's
+    /// history exactly as it was, and her change is still counted step by step for the pane's Undo.
+    #[test]
+    fn the_undo_limit_changes_nothing_to_nora_s_steps() {
+        let mut a = app(Services::default());
+        // The text is the steps': no capital letter AutoCorrect would make.
+        a.session.prefs.autocorrect.enabled = false;
+        for _ in 0..505 {
+            a.run("text.insert", json!({"text": "x"})).unwrap();
+            a.session.close_typing();
+        }
+        assert_eq!(a.session.undo_depth(), 500, "the history is full");
+        let step = |n: usize| {
+            if n.is_multiple_of(2) {
+                CommandCall { command: "text.insert".into(), params: json!({"text": "n"}) }
+            } else {
+                CommandCall { command: "text.newParagraph".into(), params: json!({}) }
+            }
+        };
+        let mut commands: Vec<CommandCall> = (0..6).map(step).collect();
+        commands.push(CommandCall { command: "no.such.command".into(), params: json!({}) });
+        assert!(run(&mut a, DocActionKind::Batch { commands }).is_err());
+        assert_eq!(text_of(&mut a), "x".repeat(505));
+        a.run("edit.undo", json!({})).unwrap();
+        assert_eq!(text_of(&mut a), "x".repeat(504), "the person's Undo takes back their own last step, no step of the failed batch");
+        a.run("edit.redo", json!({})).unwrap();
+        run(&mut a, DocActionKind::Batch { commands: (0..2).map(step).collect() }).unwrap();
+        assert_eq!(text_of(&mut a), format!("{}n\n", "x".repeat(505)));
+        assert_eq!(run(&mut a, DocActionKind::Undo).unwrap()["undone"], 2, "both of Nora's steps, though the history stays at 500");
+        assert_eq!(text_of(&mut a), "x".repeat(505));
+    }
+
+    /// A batch that fails leaves no formatting of Nora's waiting at the caret for the person's next typing.
+    #[test]
+    fn a_failing_batch_leaves_no_formatting_waiting_at_the_caret() {
+        let mut a = app(Services::default());
+        a.run("text.insert", json!({"text": "plain "})).unwrap();
+        let commands = vec![
+            CommandCall { command: "format.bold".into(), params: json!({}) },
+            CommandCall { command: "no.such.command".into(), params: json!({}) },
+        ];
+        assert!(run(&mut a, DocActionKind::Batch { commands }).is_err());
+        assert!(a.session.pending.is_none(), "the person types as before: {:?}", a.session.pending);
+    }
+
+    /// The person's clipboard, their Clipboard pane and the formatting their format painter holds are theirs: Nora
+    /// neither reads nor changes them. A paste of what she gives herself is hers.
+    #[test]
+    fn nora_leaves_the_person_s_clipboard_alone() {
+        let mut a = app(Services::default());
+        a.run("text.insert", json!({"text": "secret"})).unwrap();
+        a.run("select.all", json!({})).unwrap();
+        a.run("edit.copy", json!({})).unwrap();
+        a.run("caret.docEnd", json!({})).unwrap();
+        let clipboard = a.session.clipboard_text.clone();
+        assert_eq!(clipboard, "secret");
+        for (command, params) in [
+            ("edit.copy", json!({})),
+            ("edit.cut", json!({})),
+            ("edit.paste", json!({})),
+            ("edit.pasteText", json!({})),
+            ("edit.pasteMerge", json!({})),
+            ("edit.pasteSpecial", json!({"as": "text"})),
+            ("edit.clipboardItems", json!({})),
+            ("edit.pasteClipboardItem", json!({"index": 0})),
+            ("edit.pasteAllClipboard", json!({})),
+            ("edit.deleteClipboardItem", json!({"index": 0})),
+            ("edit.clearClipboard", json!({})),
+            ("edit.copyFormat", json!({})),
+            ("edit.pasteFormat", json!({})),
+            ("edit.formatPainter", json!({})),
+            // What the engine does not read as the text to paste leaves it to paste the person's clipboard.
+            ("edit.paste", json!({"text": 5})),
+            ("edit.pasteText", json!({"html": "<b>given</b>"})),
+            ("edit.pasteSpecial", json!({"as": "formatted", "text": "secret"})),
+            ("edit.pasteSpecial", json!({"as": "text", "html": "<b>given</b>"})),
+            ("edit.pasteSpecial", json!({"as": "HTML", "rtf": "{\\rtf1 given}"})),
+            ("edit.paste", json!({"text": ""})),
+            // Replace with `^c` is the person's clipboard; without `with`, the Replace with text they typed last.
+            ("edit.replaceAll", json!({"text": "secret", "with": "^c"})),
+            ("edit.replace", json!({"text": "secret", "with": "a ^c"})),
+            ("edit.replaceAll", json!({"text": "secret"})),
+            ("edit.replaceAll", json!({"with": "theirs"})),
+        ] {
+            refused(&mut a, command, params);
+        }
+        assert_eq!(text_of(&mut a), "secret", "nothing of the person's clipboard was pasted");
+        assert_eq!(a.session.clipboard_text, clipboard, "their clipboard holds what they copied");
+        assert_eq!(a.session.clip_history.len(), 1, "and so does their Clipboard pane");
+        assert!(a.session.painter.is_none(), "no formatting waits for their next selection");
+        play(&mut a, "edit.paste", json!({"text": " and Nora's"})).unwrap();
+        play(&mut a, "edit.pasteSpecial", json!({"as": "text", "text": " own"})).unwrap();
+        play(&mut a, "edit.replaceAll", json!({"text": "own", "with": "own words"})).unwrap();
+        assert_eq!(text_of(&mut a), "secret and Nora's own words");
+    }
+
+    /// The person's view, panes and windows are theirs, on the View tab or elsewhere: refused, and the view stays as
+    /// they left it.
+    #[test]
+    fn nora_leaves_the_person_s_view_and_windows_alone() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Hello");
+        let view = serde_json::to_value(&a.session.view).unwrap();
+        for (command, params) in [
+            ("view.darkMode", json!({"value": true})),
+            ("view.zoom", json!({"value": 200})),
+            ("view.readMode", json!({})),
+            ("view.outline", json!({})),
+            ("view.newWindow", json!({})),
+            ("view.split", json!({})),
+            ("view.navigationPane", json!({"value": true})),
+            ("table.viewGridlines", json!({"value": false})),
+            ("styles.pane", json!({})),
+            ("styles.inspector", json!({"value": true})),
+            ("styles.apply", json!({})),
+            ("review.markup", json!({"value": "noMarkup"})),
+            ("review.showMarkup", json!({"value": false})),
+            ("review.proofing", json!({"value": false})),
+            ("review.hideInk", json!({"value": true})),
+            ("fields.toggleCode", json!({})),
+            ("developer.designMode", json!({"value": true})),
+            ("draw.replay", json!({"value": true})),
+            ("edit.clipboardPane", json!({"value": true})),
+            ("smartArt.textPane", json!({"value": true})),
+            ("outline.showLevel2", json!({})),
+            ("outline.showAll", json!({})),
+            ("outline.close", json!({})),
+            ("edit.advancedFind", json!({"text": "Hello", "highlight": true})),
+        ] {
+            refused(&mut a, command, params);
+        }
+        assert_eq!(serde_json::to_value(&a.session.view).unwrap(), view, "the view is as the person left it");
+        assert!(!a.session.find.highlight, "and nothing is highlighted in it");
+    }
+
+    /// The person's searches are theirs: Nora searches for the text she names, never for what the person searched for
+    /// last, and their Find (what they searched for, their Replace with text, their options) stays as they left it.
+    #[test]
+    fn the_person_s_searches_stay_theirs() {
+        let mut a = app(Services::default());
+        a.run("text.insert", json!({"text": "Hello world, hello"})).unwrap();
+        // The person searched with a regular expression.
+        a.run("edit.find", json!({"text": "w.rld", "regex": true})).unwrap();
+        a.run("caret.docEnd", json!({})).unwrap();
+        let find = serde_json::to_value(&a.session.find).unwrap();
+        for (command, params) in [
+            ("edit.findNext", json!({})),
+            ("edit.findPrevious", json!({})),
+            ("edit.find", json!({"text": ""})),
+            ("edit.advancedFind", json!({"highlight": null})),
+            ("edit.advancedFind", json!({"text": "Hello", "highlight": 0})),
+        ] {
+            refused(&mut a, command, params);
+        }
+        assert_eq!(a.session.selected_text(), "", "nothing the person searched for was selected for Nora");
+        // Nora's search starts from Find's defaults: the person's options don't change what her text means.
+        let found = play(&mut a, "edit.find", json!({"text": "hello", "matchCase": true})).unwrap();
+        assert_eq!(found["count"], 1, "{found}");
+        play(&mut a, "edit.replaceAll", json!({"text": "o.", "with": "X"})).unwrap();
+        assert_eq!(text_of(&mut a), "Hello world, hello", "`o.` is two characters to Nora, not the person's pattern");
+        assert_eq!(serde_json::to_value(&a.session.find).unwrap(), find, "the person's Find is as they left it");
+    }
+
+    /// The tools that take the person's next clicks (a pen, the eraser, the lasso, the table pen, the format painter)
+    /// and the pens of their gallery stay theirs. The same commands with a place to work on are edits.
+    #[test]
+    fn the_tools_for_the_person_s_next_clicks_stay_theirs() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Hello");
+        let draw = serde_json::to_value(&a.session.view.draw).unwrap();
+        for (command, params) in [
+            ("draw.pen", json!({})),
+            ("draw.pencil", json!({"color": "FF0000"})),
+            ("draw.highlighter", json!({})),
+            ("draw.select", json!({})),
+            ("draw.eraser", json!({})),
+            ("draw.lasso", json!({})),
+            // The lasso's own reading: only `clear: true` or `points` leave the tool where it is.
+            ("draw.lasso", json!({"clear": false})),
+            ("draw.lasso", json!({"clear": "yes"})),
+            ("draw.addPen", json!({"kind": "pen", "color": "00FF00", "width": 2})),
+            ("draw.removePen", json!({"index": 0})),
+            ("draw.inkToShape", json!({"value": true})),
+            ("table.draw", json!({})),
+            ("table.eraser", json!({})),
+            ("edit.formatPainter", json!({"sticky": true})),
+        ] {
+            refused(&mut a, command, params);
+        }
+        assert_eq!(serde_json::to_value(&a.session.view.draw).unwrap(), draw, "no tool in the person's hand, their pens as they were");
+        assert!(a.canvas.table_tool.is_none(), "nor the table pen");
+        assert!(a.session.painter.is_none(), "nor the format painter");
+        for (command, params) in [
+            ("draw.eraser", json!({"page": 0, "x": 10, "y": 10})),
+            ("draw.lasso", json!({"clear": true})),
+            ("table.draw", json!({"page": 0, "x0": 72, "y0": 300, "x1": 300, "y1": 400})),
+        ] {
+            let result = play(&mut a, command, params);
+            assert!(!result.as_ref().is_err_and(|e| e.contains("refused")), "{command}: {result:?}");
+        }
+    }
+
+    /// A macro runs its steps, and Repeat the last command, out of the pane's sight: refused.
+    #[test]
+    fn no_macro_nor_repeat_runs_a_command_out_of_the_pane_s_sight() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Hello");
+        let steps = json!([{"command": "view.darkMode", "params": {"value": true}}]);
+        for (command, params) in [
+            ("tools.macros", json!({"define": {"name": "Dark", "steps": steps}, "run": "Dark"})),
+            ("tools.recordMacro", json!({"name": "Mine"})),
+            ("edit.repeat", json!({})),
+        ] {
+            refused(&mut a, command, params);
+        }
+        assert!(!a.session.view.dark_mode, "no step of a macro ran");
+        assert!(a.session.macros.is_empty() && a.session.recording.is_none(), "and no macro was made");
+    }
+
+    /// The person's settings (typing, AutoCorrect, keys, ribbon, how revisions and words are shown and counted), their
+    /// dictionary and the fonts they added are theirs.
+    #[test]
+    fn the_person_s_settings_dictionary_and_fonts_stay_theirs() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Hello");
+        let prefs = a.session.prefs.clone();
+        let keys = serde_json::to_value(&a.session.keymap).unwrap();
+        let ribbon = serde_json::to_value(&a.session.ribbon).unwrap();
+        for (command, params) in [
+            ("text.overtype", json!({"value": true})),
+            ("tools.autocorrect", json!({"add": {"from": "teh", "to": "Nora"}})),
+            ("tools.customizeKeyboard", json!({"assign": {"command": "format.bold", "key": "Mod+Shift+K"}})),
+            ("tools.customizeRibbon", json!({"hide": "Home"})),
+            ("review.trackingOptions", json!({"balloons": "inline"})),
+            ("review.wordCount", json!({"includeTextBoxes": true})),
+            ("review.language", json!({"detect": false})),
+            ("review.addToDictionary", json!({"word": "qqnorazzword"})),
+            ("review.ignoreAll", json!({"word": "qqnorazzword"})),
+            ("font.add", json!({"data": "AAAA", "name": "Nora.ttf"})),
+            ("font.remove", json!({"family": "Nora Sans"})),
+        ] {
+            refused(&mut a, command, params);
+        }
+        assert!(a.session.prefs == prefs, "the person's settings are as they were");
+        assert_eq!(serde_json::to_value(&a.session.keymap).unwrap(), keys);
+        assert_eq!(serde_json::to_value(&a.session.ribbon).unwrap(), ribbon);
+        play(&mut a, "review.wordCount", json!({})).unwrap();
+    }
+
+    /// A file of the computer is reached by other names than `path`: the original of a comparison, the template the
+    /// document is attached to. Refused.
+    #[test]
+    fn no_file_of_the_computer_is_reached_by_another_name() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Mine");
+        a.session.doc.settings.attached_template = Some("/nonexistent/Nora.dotx".into());
+        for (command, params) in [
+            ("review.compare", json!({"text": "Theirs", "original": "/nonexistent/original.docx"})),
+            ("review.combine", json!({"text": "Theirs", "original": "/nonexistent/original.docx"})),
+            ("tools.updateStyles", json!({})),
+            ("tools.updateStyles", json!({"data": 5})),
+            ("tools.attachTemplate", json!({"path": "/nonexistent/Nora.dotx", "update": true})),
+        ] {
+            refused(&mut a, command, params);
+        }
+        assert_eq!(text_of(&mut a), "Mine");
+    }
+
+    /// A password of Nora's would lock the person out of their own document, or open it with one they gave nobody.
+    #[test]
+    fn no_password_of_nora_s_locks_the_person_out() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Mine");
+        for params in
+            [json!({"mode": "readOnly", "password": "secret"}), json!({"stop": true, "password": "guess"}), json!({"options": {"newPassword": "x"}})]
+        {
+            let error = refused(&mut a, "review.restrict", params);
+            assert!(error.contains("password"), "{error}");
+        }
+        assert!(a.session.doc.settings.protection.is_none(), "nothing was protected");
+        // Without a password the person lifts the protection as easily: allowed.
+        play(&mut a, "review.restrict", json!({"mode": "comments"})).unwrap();
+        assert_eq!(a.session.doc.settings.protection.as_deref(), Some("comments"));
+    }
+
+    /// Nora edits the document that is open: the mail merge commands that would replace it with a new one are refused.
+    #[test]
+    fn nora_never_replaces_the_document() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Mine");
+        a.session.path = Some("/nonexistent/Mine.docx".into());
+        let document = a.session.document_id();
+        for (command, params) in [
+            ("mailings.labels", json!({"text": "Nora"})),
+            ("mailings.envelopes", json!({"delivery": "Nora\nSomewhere"})),
+            // A comparison shown in a new document turns the one open into an untitled one, its file forgotten.
+            ("review.compare", json!({"text": "Theirs", "showIn": "new"})),
+            ("review.combine", json!({"text": "Theirs", "showIn": "revised"})),
+        ] {
+            refused(&mut a, command, params);
+        }
+        assert_eq!(a.session.document_id(), document, "the person's document is still the one open");
+        assert_eq!(a.session.path.as_deref(), Some(std::path::Path::new("/nonexistent/Mine.docx")), "with its file");
+        assert_eq!(text_of(&mut a), "Mine");
+        // Compared in the document itself, the differences are tracked changes in it: an edit.
+        play(&mut a, "review.compare", json!({"text": "Mine and theirs"})).unwrap();
+        assert_eq!(a.session.path.as_deref(), Some(std::path::Path::new("/nonexistent/Mine.docx")));
+        let added = play(&mut a, "mailings.envelopes", json!({"delivery": "Nora\nSomewhere", "add": true}));
+        assert!(!added.as_ref().is_err_and(|e| e.contains("refused")), "an envelope added to the document is an edit: {added:?}");
+    }
+
+    /// A command that would ask the person something (a dialog, a file picker, the search box of a pane) needs the
+    /// person: refused, and nothing opens in front of them.
+    #[test]
+    fn a_command_that_would_ask_the_person_something_is_refused() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Hello");
+        for (command, params) in [
+            ("format.fontDialog", json!({})),
+            ("para.dialog", json!({})),
+            ("layout.pageSetup", json!({})),
+            ("edit.findReplace", json!({})),
+            ("edit.find", json!({})),
+            ("edit.goto", json!({})),
+            ("insert.picture", json!({})),
+            ("insert.chart", json!({})),
+            ("tools.search", json!({})),
+        ] {
+            refused(&mut a, command, params);
+            assert!(a.dialog.is_none(), "{command}: no dialog in front of the person");
+        }
+        assert!(!a.session.view.nav_pane, "nor a pane opened for them");
+        assert!(!a.ui.backstage);
+        // With what it needs, the same command asks nothing, and runs.
+        play(&mut a, "edit.find", json!({"text": "Hello"})).unwrap();
+    }
+
+    /// `dir` is a direction (Text Direction, moving in an equation), not a folder: no command of WordCraft reads a
+    /// folder by `dir`.
+    #[test]
+    fn a_dir_parameter_is_a_direction_not_a_folder() {
+        let mut a = app(Services::default());
+        a.run("insert.textBox", json!({"text": "Label"})).unwrap();
+        play(&mut a, "shape.textDirection", json!({"dir": "vert"})).unwrap();
+    }
+
+    /// An action that changed nothing (a command that only reads: no undo step, the document as it was) says so with
+    /// `"changed": false`, so that the conversation offers no Undo for it; a change says nothing of the kind, and only
+    /// the changes are kept for the pane's Undo.
+    #[test]
+    fn an_action_that_changed_nothing_says_so() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Hello");
+        let read = play(&mut a, "document.text", json!({})).unwrap();
+        assert_eq!(read["changed"], false, "{read}");
+        assert_eq!(read["text"], "Hello", "beside what the command answers");
+        let commands = vec![
+            CommandCall { command: "document.selection".into(), params: json!({}) },
+            CommandCall { command: "review.wordCount".into(), params: json!({}) },
+        ];
+        let batch = run(&mut a, DocActionKind::Batch { commands }).unwrap();
+        assert_eq!(batch["changed"], false, "{batch}");
+        assert_eq!(batch["result"].as_array().map(Vec::len), Some(2), "a list goes under `result`: {batch}");
+        let typed = run(&mut a, DocActionKind::TypeText { text: " world".into(), paragraphs: false }).unwrap();
+        assert!(typed.get("changed").is_none(), "a change says nothing of the kind: {typed}");
+        let bold = play(&mut a, "format.bold", json!({})).unwrap();
+        assert!(bold.get("changed").is_none(), "{bold}");
+        // The pane's Undo takes back the changes, one after the other, never a reading.
+        run(&mut a, DocActionKind::Undo).unwrap();
+        run(&mut a, DocActionKind::Undo).unwrap();
+        assert_eq!(text_of(&mut a), "Hello");
+        run(&mut a, DocActionKind::Undo).unwrap();
+        assert_eq!(text_of(&mut a), "");
+    }
+
+    /// `path` also names a place in the document (a position's paragraph, a paragraph's): a list of numbers, which
+    /// reaches no file.
+    #[test]
+    fn a_place_in_the_document_is_no_file() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Hello world");
+        play(&mut a, "caret.set", json!({"pos": wordcraft_doc::Pos::body(0, 5)})).unwrap();
+        assert_eq!(a.session.sel.focus.off, 5);
+        play(&mut a, "select.range", json!({"anchor": wordcraft_doc::Pos::body(0, 6), "focus": wordcraft_doc::Pos::body(0, 11)})).unwrap();
+        assert_eq!(a.session.selected_text(), "world");
+        play(&mut a, "document.paragraph", json!({"path": [0]})).unwrap();
     }
 
     #[test]
@@ -663,5 +1554,115 @@ mod tests {
         let long = "é".repeat(60);
         let typed = describe(&DocActionKind::TypeText { text: long, paragraphs: false });
         assert!(typed.starts_with("Type \"") && typed.ends_with("…\""), "{typed}");
+    }
+
+    /// The commands refused by their name alone, whatever their parameters: every entry of the pane's lists is a
+    /// command of WordCraft (one renamed upstream would refuse nothing), and no other command of the engine is
+    /// refused for its name. The lists are spelled out again here, so that a change to them changes this test too.
+    #[test]
+    fn the_commands_refused_by_name_are_the_person_s_and_no_others() {
+        let registry = wordcraft_engine::cmd::registry();
+        let ids: Vec<&str> = registry.all().iter().map(|spec| spec.id).collect();
+        // A command an upstream merge adds is Nora's to run until someone decides otherwise: this count stops the merge
+        // until the new commands have been looked at against the lists above (then it is updated).
+        assert_eq!(ids.len(), 622, "WordCraft's commands changed: decide which new ones are the person's, then update this count");
+        for entry in THE_PERSON_S {
+            let known = match entry.strip_suffix('*') {
+                Some(prefix) => ids.iter().any(|id| id.starts_with(prefix)),
+                None => ids.contains(entry),
+            };
+            assert!(known, "{entry} is no command of WordCraft");
+        }
+        for family in REFUSED_FAMILIES.iter().filter(|family| **family != "ui.") {
+            assert!(ids.iter().any(|id| id.starts_with(family)), "{family} is no family of WordCraft's commands");
+        }
+        let families = ["file.", "app.", "ui.", "view.", "edit.undo", "edit.redo", "review.readAloud", "readAloud.", "outline.showLevel"];
+        let theirs = [
+            "table.viewGridlines",
+            "styles.pane",
+            "styles.inspector",
+            "smartArt.textPane",
+            "edit.clipboardPane",
+            "review.markup",
+            "review.showMarkup",
+            "review.trackingOptions",
+            "review.proofing",
+            "review.hideInk",
+            "fields.toggleCode",
+            "developer.designMode",
+            "draw.replay",
+            "outline.expand",
+            "outline.collapse",
+            "outline.toggle",
+            "outline.showAll",
+            "outline.firstLineOnly",
+            "outline.showFormatting",
+            "outline.close",
+            "edit.repeat",
+            "edit.copy",
+            "edit.cut",
+            "edit.clipboardItems",
+            "edit.pasteClipboardItem",
+            "edit.pasteAllClipboard",
+            "edit.deleteClipboardItem",
+            "edit.clearClipboard",
+            "edit.copyFormat",
+            "edit.pasteFormat",
+            "edit.formatPainter",
+            "draw.pen",
+            "draw.pencil",
+            "draw.highlighter",
+            "draw.select",
+            "draw.addPen",
+            "draw.removePen",
+            "draw.inkToShape",
+            "tools.macros",
+            "tools.recordMacro",
+            "text.overtype",
+            "tools.autocorrect",
+            "tools.customizeKeyboard",
+            "tools.customizeRibbon",
+            "review.addToDictionary",
+            "review.ignoreAll",
+            "font.add",
+            "font.remove",
+        ];
+        for id in &ids {
+            let expected = families.iter().any(|family| id.starts_with(family)) || theirs.contains(id);
+            assert_eq!(is_the_person_s(id), expected, "{id}");
+        }
+        // The editing commands next to them stay Nora's.
+        for id in ["styles.inspectorClear", "edit.paste", "draw.stroke", "draw.erase", "draw.convertInk", "outline.promote", "review.newComment"] {
+            assert!(ids.contains(&id) && !is_the_person_s(id), "{id}");
+        }
+    }
+
+    /// The person reads why the pane's Undo is refused in their language, and the pane forgets Nora's older changes
+    /// with it, as the conversation does: they lie under the person's edit too.
+    #[test]
+    fn a_refused_undo_says_why_in_the_person_s_language_and_forgets_nora_s_changes() {
+        let mut a = app(Services::default());
+        a.run("ui.language", json!({"value": "fr"})).unwrap();
+        // As every frame does before the pane plays what Nora asks.
+        crate::i18n::set_current(crate::i18n::Lang::from_pref(&a.ui.language));
+        type_in(&mut a, "un");
+        type_in(&mut a, " deux");
+        a.run("text.insert", json!({"text": " trois"})).unwrap();
+        let error = run(&mut a, DocActionKind::Undo).unwrap_err();
+        assert_eq!(error, "Vous avez modifié le document après Nora : utilisez plutôt la fonction Annuler de l'éditeur.");
+        assert!(a.nora.changes.is_empty(), "the older change of Nora's is forgotten too");
+        assert_eq!(run(&mut a, DocActionKind::Undo).unwrap_err(), "Il n'y a aucune modification de Nora à annuler.");
+        assert_eq!(text_of(&mut a), "un deux trois", "nothing was undone");
+    }
+
+    /// Only the requests of Nora's commands are kept from the interface: the person's own command still opens its
+    /// dialog, after one of Nora's was refused for asking.
+    #[test]
+    fn the_person_s_own_dialogs_still_open() {
+        let mut a = app(Services::default());
+        refused(&mut a, "format.fontDialog", json!({}));
+        assert!(a.nora.asked.is_none(), "the pane keeps the requests only while it plays a command");
+        a.run("format.fontDialog", json!({})).unwrap();
+        assert!(a.dialog.is_some(), "the person's Font dialog opens");
     }
 }

@@ -36,7 +36,11 @@ pub fn start() {
             log::error!("no unsaved-changes guard: {e}");
         }
         let mut options = eframe::WebOptions::default();
-        if query().contains("webgl")
+        // //// Neoffice — the URL's flags, read by name as URL parameters (`crate::flags`): upstream found `webgl` and
+        // `sample` anywhere in the query, so `?author=webgl-fan` turned WebGL on and `?nora=https://sample.example`
+        // opened the sample document.
+        let flags = crate::flags::Flags::of(&query());
+        if flags.webgl
             && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
         {
             create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
@@ -62,7 +66,8 @@ pub fn start() {
                     // The browser's locale picks the new document's paper, the units and the
                     // decimal separator (#838).
                     let region = wordcraft_ui_egui::i18n::system_region();
-                    let sample = query().contains("sample");
+                    // //// Neoffice — `?sample` read by name (see `flags` above).
+                    let sample = flags.sample;
                     let doc = if sample { wordcraft_engine::sample::sample_document() } else { wordcraft_engine::blank_document(&region) };
                     let mut session = Session::new(doc);
                     session.system_region = region;
@@ -71,10 +76,11 @@ pub fn start() {
                     if let Some(bridge) = &app_bridge {
                         bridge.connect(&mut services, inbox.clone(), saves.clone(), cc.egui_ctx.clone());
                     }
-                    // //// Neoffice — a page that asks for Nora (`?nora`, `?nora=<origin>`) gets the pane, connected
-                    // with the page's own session. The browser build keeps no setting, so the host opens it. A host
-                    // that makes the calls itself (`wordcraftNoraCall`, Neodesk) turns it on the same way.
-                    let nora = nora::requested(&query()).or_else(|| nora::offered().then(String::new));
+                    // //// Neoffice — a page that asks for Nora (`?nora`) gets the pane, connected with the page's own
+                    // session at the page's own origin (an origin `?nora=` names only as `crate::nora_origin` allows).
+                    // The browser build keeps no setting, so the host opens it. A host that makes the calls itself
+                    // (`wordcraftNoraCall`, Neodesk) turns it on the same way.
+                    let nora = nora::requested(flags.nora.as_deref()).or_else(|| nora::offered().then(String::new));
                     if let Some(origin) = &nora {
                         nora::connect(&mut services, origin.clone(), cc.egui_ctx.clone());
                     }

@@ -73,6 +73,14 @@ impl AutomationRoots {
         Ok(Some(Arc::new(Self { read, write })))
     }
 
+    // //// Neoffice — added: roots for the commands the Nora pane plays (crates/ui-egui/src/nora_pane.rs), which must reach
+    // no file of the computer whatever their parameters are called; `new` needs a folder to grant.
+    /// Roots that grant neither read nor write access: in force, every path a command reads or writes
+    /// is refused.
+    pub fn none() -> Arc<Self> {
+        Arc::new(Self { read: None, write: None })
+    }
+
     /// The read root, absolute with its links followed.
     pub fn read_root(&self) -> Option<&Path> {
         self.read.as_ref().map(|r| r.shown.as_path())
@@ -298,6 +306,26 @@ mod tests {
         assert!(e.contains("outside the write root"), "{e}");
         assert!(roots.check(&s(base.join("out/x.png")), Access::Read).unwrap_err().contains("outside the read root"));
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    // //// Neoffice — added test: the roots of `none` (the Nora pane's) refuse every path, to read and to write, also
+    // through a command.
+    #[test]
+    fn roots_that_grant_nothing_refuse_every_path() {
+        let roots = AutomationRoots::none();
+        let here = s(std::env::current_dir().unwrap());
+        for access in [Access::Read, Access::Write] {
+            let e = roots.check(&here, access).unwrap_err();
+            assert!(e.starts_with("automation filesystem access is not granted"), "{e}");
+        }
+        confine(Some(&roots), || {
+            assert!(check_read("Cargo.toml").is_err());
+            assert!(check_write("out.docx").is_err());
+            let mut session = crate::Session::new(wordcraft_doc::Document::new());
+            let e = session.run("insert.textFromFile", &serde_json::json!({"path": "Cargo.toml"})).unwrap_err().to_string();
+            assert!(e.contains("not granted"), "{e}");
+        });
+        assert!(check_read("Cargo.toml").is_ok(), "only while they are in force");
     }
 
     #[test]

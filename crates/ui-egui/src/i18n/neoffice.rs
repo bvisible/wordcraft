@@ -39,6 +39,11 @@ pub const FRENCH: &[(&str, &str)] = &[
     ("Send", "Envoyer"),
     ("Couldn't save {name}: {error}", "Impossible d'enregistrer {name} : {error}"),
     ("This document is opened from the page that hosts the editor.", "Ce document est ouvert depuis la page qui héberge l'éditeur."),
+    ("There is nothing of Nora's to undo.", "Il n'y a aucune modification de Nora à annuler."),
+    (
+        "You changed the document after Nora did: use the editor's Undo instead.",
+        "Vous avez modifié le document après Nora : utilisez plutôt la fonction Annuler de l'éditeur.",
+    ),
 ];
 
 /// The strings the interface looks up whatever the Nora pane does (its ribbon group and its switch in
