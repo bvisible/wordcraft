@@ -44,6 +44,15 @@ pub const FRENCH: &[(&str, &str)] = &[
         "You changed the document after Nora did: use the editor's Undo instead.",
         "Vous avez modifié le document après Nora : utilisez plutôt la fonction Annuler de l'éditeur.",
     ),
+    ("Stopped.", "Arrêté."),
+    ("Nora did not answer in time.", "Nora n'a pas répondu à temps."),
+    ("Nora could not be reached. Check the connection and try again.", "Nora n'a pas pu être jointe. Vérifiez la connexion et réessayez."),
+    ("Your session has expired. Sign in again.", "Votre session a expiré. Reconnectez-vous."),
+    (
+        "The server could not answer (error {status}). Try again in a moment.",
+        "Le serveur n'a pas pu répondre (erreur {status}). Réessayez dans un instant.",
+    ),
+    ("Nora's answer could not be read.", "La réponse de Nora n'a pas pu être lue."),
 ];
 
 /// The strings the interface looks up whatever the Nora pane does (its ribbon group and its switch in

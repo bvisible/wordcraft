@@ -79,8 +79,10 @@ arboard = { version = "3.6", default-features = false, features = ["wayland-data
 # carries Nora's client core and its egui panel. Both depend on egui only (the same 0.36 as here), so
 # upstream's craft-libs types are not duplicated. To follow upstream's craft-libs later, merge it into
 # the fork and move this revision; nothing else changes.
-craft-nora = { git = "https://github.com/bvisible/craft-libs", rev = "8fee6abfbd33ae783a4d74bbcf005ae3ca986f84" }
-craft-nora-ui = { git = "https://github.com/bvisible/craft-libs", rev = "8fee6abfbd33ae783a4d74bbcf005ae3ca986f84" }
+# //// Neoffice — revision adbcef6 (craft-libs version-15, 17.10.2026): the Stop, Undo offered only for what Nora
+# changed, replies that stay in view, and connection errors in the app's language (`NoraPanel::with_error_words`).
+craft-nora = { git = "https://github.com/bvisible/craft-libs", rev = "adbcef6c286b6bcd264cc91fbf50dc3f42d60e5a" }
+craft-nora-ui = { git = "https://github.com/bvisible/craft-libs", rev = "adbcef6c286b6bcd264cc91fbf50dc3f42d60e5a" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

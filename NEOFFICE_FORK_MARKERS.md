@@ -53,8 +53,9 @@ their own `//// Neoffice — added file` header.
   were. The pane's Undo takes back Nora's last change only while the document is still at the revision
   that change left (`Session::rev`), so it never takes back the person's own work, also after they
   undid Nora's change and typed; an action that changed nothing answers with `"changed": false` and
-  leaves nothing for the pane's Undo (craft-nora offers no Undo for it from `9d28340` on; the `8fee6ab`
-  pinned today still does). At the undo limit (500 steps) the pane counts Nora's steps with
+  leaves nothing for the pane's Undo (craft-nora offers no Undo for it either, from `9d28340` on;
+  `Cargo.toml` pins `adbcef6`). While Nora works the panel's Send button is a Stop button, and a failure of
+  the connection to Nora is said in the interface language (`error_words`, French in `i18n/neoffice.rs`). At the undo limit (500 steps) the pane counts Nora's steps with
   `Session::undo_pushed` and rolls a failed action back with `Session::edit_snapshot_whole`, both added
   in `crates/engine/src/session.rs` (marked): `undo_depth` stops growing there, and `edit_snapshot`
   keeps only the oldest four steps.
