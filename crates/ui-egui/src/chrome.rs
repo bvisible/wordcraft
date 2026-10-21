@@ -322,7 +322,8 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
             // Centred title.
             let title = if !app.has_document() {
                 // No document open (#1129): the app's name alone.
-                "WordCraft".to_string()
+                // //// Neoffice — our builds show our product's name (NEOFFICE_PRODUCT_NAME), upstream's otherwise.
+                crate::brand::name().to_string()
             } else {
                 format!(
                     "{} — {}",

@@ -383,7 +383,8 @@ pub fn tr(lang: Lang, s: &str) -> &str {
     }
     // //// Neoffice — the strings we added (the Nora pane) are translated in `neoffice.rs`, not in upstream's
     // catalogs, so that a merge of upstream never touches them; a catalog that has the string wins.
-    lang.catalog().plain(s).or_else(|| neoffice::plain(lang, s)).unwrap_or(s)
+    // //// Neoffice — our builds show our product's name (NEOFFICE_PRODUCT_NAME), upstream's otherwise (brand.rs).
+    crate::brand::rebrand(s, lang.catalog().plain(s).or_else(|| neoffice::plain(lang, s)).unwrap_or(s))
 }
 
 /// A style's name as the interface shows it: built-in styles (`Normal`, `Heading 2`, `TOC 3`) in

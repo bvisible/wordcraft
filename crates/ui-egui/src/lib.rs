@@ -24,6 +24,8 @@ pub mod a11y;
 pub mod a11y_pane;
 pub mod autoscroll;
 pub mod backstage;
+// //// Neoffice — our builds show our product's name (NEOFFICE_PRODUCT_NAME), upstream's otherwise (see brand.rs).
+pub mod brand;
 pub mod canvas;
 pub mod caret_glide;
 pub mod chrome;
@@ -1267,10 +1269,11 @@ impl WordApp {
             // button does it ([`WordApp::make_default_app`]); scripts, the control channel and
             // MCP get an error.
             "ui.makeDefaultApp" => {
-                return Some(Err(
-                    "making WordCraft the default app needs a click in File › Options › General; scripts and agents can't change system defaults"
-                        .into(),
-                ));
+                // //// Neoffice — our builds show our product's name (NEOFFICE_PRODUCT_NAME), upstream's otherwise.
+                return Some(Err(format!(
+                    "making {} the default app needs a click in File › Options › General; scripts and agents can't change system defaults",
+                    brand::name()
+                )));
             }
             "ui.discord" => {
                 // //// Neoffice — nothing to open when the hosting page hides the community links.
@@ -1333,7 +1336,8 @@ impl WordApp {
     /// command, so nothing programmatic (control channel, MCP, macros) can change system defaults.
     pub(crate) fn make_default_app(&mut self) -> Result<Value, String> {
         let Some(hook) = self.services.make_default_app.as_ref() else {
-            return Err("WordCraft can't change the default apps here; use your system's settings".into());
+            // //// Neoffice — our builds show our product's name (NEOFFICE_PRODUCT_NAME), upstream's otherwise.
+            return Err(format!("{} can't change the default apps here; use your system's settings", brand::name()));
         };
         match hook() {
             Ok(DefaultApp::SettingsOpened) => {
@@ -1753,10 +1757,12 @@ impl WordApp {
         if let Some(url) = self.canvas.open_url.take() {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         }
+        // //// Neoffice — our builds show our product's name (NEOFFICE_PRODUCT_NAME), upstream's otherwise.
         let title = if self.has_document() {
-            format!("{}{} - WordCraft", self.title_stem(), if self.session.dirty { " •" } else { "" })
+            format!("{}{} - {}", self.title_stem(), if self.session.dirty { " •" } else { "" }, brand::name())
         } else {
-            "WordCraft".to_string()
+            // //// Neoffice — the app's name alone: ours in our builds (see above).
+            brand::name().to_string()
         };
         if title != self.sent_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));

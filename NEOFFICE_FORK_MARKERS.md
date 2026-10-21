@@ -107,6 +107,15 @@ their own `//// Neoffice — added file` header.
   hands over still opens (`drain_inbox` lifts the guard for it). Before, File › New or Open in a hosted window replaced
   the document of the page with another one the page knew nothing about. Every other build behaves as before.
 
+- **Our product's name in our builds** (new file `crates/ui-egui/src/brand.rs`): `brand::name()` is
+  `NEOFFICE_PRODUCT_NAME` when the build sets it (only the build step of `neoffice-web.yml`: `NeoDoc`), upstream's name
+  otherwise, so upstream's builds and every test run are unchanged. `i18n::tr` passes its result through
+  `brand::rebrand`, which swaps the whole word `WordCraft` in every language without touching the catalogs (the licence
+  line keeps it); the title bar, the window title, two error messages and the page that failed to start call
+  `brand::name()` (marked lines in `lib.rs`, `chrome.rs`, `i18n/mod.rs` and `apps/wordcraft-web/src/web.rs`). The page
+  title and the loading text are ours in `apps/wordcraft-web/index.html`. Stored or compared names (storage folders,
+  `WordCraft User`, `wordcraft:*` messages, `ai.storyteller.*`) and the native app keep upstream's.
+
 ## Files that cannot carry a comment
 
 | File | Why it is ours |
