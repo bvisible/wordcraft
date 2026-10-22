@@ -10,8 +10,9 @@ At the next upstream merge, `grep -rn "////"` in the source plus this file give 
 picture of what is ours and why.
 
 - **Upstream**: `storytold/wordcraft`, branch `main`.
-- **Base of the divergence**: `7dfa6b0ee2aeeafec004c51fdd2ab9a697da3cc4`, the tag `v0.6.1`, where `version-15` was cut on 2026-10-13.
-  Move it at each upstream merge. The check works it out itself (the common ancestor with
+- **Base of the divergence**: `9130181a5fdaee2293e67756fd5458c601489f3c`, the tag `v0.10.0`, merged on 2026-10-23
+  (before: `a9afeb4`, upstream's `main` of 2026-10-14; `version-15` was cut at the tag `v0.6.1`, `7dfa6b0`, on
+  2026-10-13). Move it at each upstream merge. The check works it out itself (the common ancestor with
   upstream's `main`), so this line is for the reader.
 
 ## What the fork adds
@@ -26,7 +27,9 @@ their own `//// Neoffice — added file` header.
   upstream's code since the common ancestor carries no marker.
 - `.github/workflows/neoffice-ci.yml`: runs upstream's own quality gate, `cargo xtask ci`, on a
   GitHub runner (by hand, or on a push that touches code), because the maintainer's Mac has too
-  little disk to run it for every change.
+  little disk to run it for every change. Since v0.10.0 it checks out `craft-fonts` at the commit
+  upstream's own gate (`ci.yml`) and release use, as that gate does. Upstream's `ci.yml`, `nix.yml`
+  and `sonarcloud.yml` (new in v0.10.0) are disabled on this fork, like its other workflows.
 - **The Nora assistant pane** (Neoffice's assistant, in a pane at the right of the page), off until
   File › Options › Advanced › Assistant or the `ui.nora` command turns it on. It is built on
   `craft-nora` (the conversation with Nora, no I/O) and `craft-nora-ui` (the egui panel), two crates
@@ -56,9 +59,11 @@ their own `//// Neoffice — added file` header.
   leaves nothing for the pane's Undo (craft-nora offers no Undo for it either, from `9d28340` on;
   `Cargo.toml` pins `adbcef6`). While Nora works the panel's Send button is a Stop button, and a failure of
   the connection to Nora is said in the interface language (`error_words`, French in `i18n/neoffice.rs`). At the undo limit (500 steps) the pane counts Nora's steps with
-  `Session::undo_pushed` and rolls a failed action back with `Session::edit_snapshot_whole`, both added
-  in `crates/engine/src/session.rs` (marked): `undo_depth` stops growing there, and `edit_snapshot`
-  keeps only the oldest four steps.
+  upstream's `Session::undo_mark` (v0.10.0; ours, `undo_pushed`, gave the same count and is gone) and rolls a
+  failed action back with `Session::edit_snapshot_whole`, added in `crates/engine/src/session.rs` (marked):
+  `undo_depth` stops growing there, and `edit_snapshot` keeps only the oldest four steps. The Spike
+  (`edit.spike`, `edit.insertSpike`, v0.10.0) and Load System Installed Fonts are the person's, refused like
+  the clipboard and the fonts they added.
   Her strings are translated outside upstream's catalogs, in the new file
   `crates/ui-egui/src/i18n/neoffice.rs` (French), which `i18n::tr` falls back to (one marked line in
   `crates/ui-egui/src/i18n/mod.rs`).
@@ -86,8 +91,14 @@ their own `//// Neoffice — added file` header.
   use, so one host page (the Drive of the Suite, NeoDesk's window) drives every Craft editor:
   `wordcraft:ready`, `wordcraft:open` (a file to edit), `wordcraft:save` (every file the editor would
   download), `wordcraft:dirty` and `wordcraft:failed`, plus `wordcraft:saved` (`ok: false` marks the
-  document unsaved again and says why, `ok: true` marks it saved again when it has not changed since it was handed over: ours, upstream's bridges have no answer to a save) and
-  `?author=` (the name that signs comments). Without `?host=parent` the editor behaves as before.
+  document unsaved again and says why, a later `ok: true` marks it saved again when it has not changed since it was handed over: ours, upstream's bridges have no answer to a save) and
+  `?author=` (the name that signs comments, over the name stored on an earlier visit). Since v0.10.0 each
+  save handed over is a save that finishes later on upstream's tickets (`async_saves`, #1315), as one in the
+  browser's save picker is: the new file `crates/ui-egui/src/host_saves.rs` starts the ticket and ends it with
+  the page's answer, and a refusal takes upstream's own path (`settle_async_saves`, one marked line for "Couldn't
+  save" instead of "Couldn't download"); it replaces the `PickerSaves` additions upstream's `web.rs` no longer
+  has. The page's `ready`, `?author=` and the Nora pane's state are applied after the preferences upstream's
+  browser build now keeps (`prefs.rs`, `localStorage`). Without `?host=parent` the editor behaves as before.
   Drop it when upstream ships its own bridge for WordCraft, keeping `wordcraft:saved`.
 
 - **What a hosting page changes about the editor** (`Services::keep_text_format` and
@@ -103,7 +114,7 @@ their own `//// Neoffice — added file` header.
   `apps/wordcraft-web/src/web/host.rs`, so only when a page frames the editor with `?host=parent`): the editor does not
   switch to another document by itself. New, Open, Close, New from Template, Recover and the Mailings commands that
   make a new document are refused with a status message (`run` in `crates/ui-egui/src/lib.rs`, `switches_document`),
-  File › Home, New and Open are not pages of the File menu (`backstage.rs`) and no Start screen shows, and a document
+  File › Home, New, Open, Recover (v0.10.0) and Close are not pages of the File menu (`backstage.rs`) and no Start screen shows, and a document
   dropped on the editor is not taken (`opens_as_document`, asked by `apps/wordcraft-web/src/web.rs`); the file the page
   hands over still opens (`drain_inbox` lifts the guard for it). Before, File › New or Open in a hosted window replaced
   the document of the page with another one the page knew nothing about. Every other build behaves as before.

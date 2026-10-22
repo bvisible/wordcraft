@@ -14,6 +14,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # As upstream's own gate (ci.yml, v0.10.0): the craft-fonts commit its release embeds, so the layout tests see the
+  # fonts a release build has (an optional build input, crates/fonts/build.rs).
+  CRAFT_FONTS_REF: 8dcdacd5153e64560d109541a47d806f26f048c0
+
 concurrency:
   group: neoffice-ci-${{ github.ref }}
   cancel-in-progress: true
@@ -29,6 +34,12 @@ jobs:
       RUST_BACKTRACE: 1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out craft-fonts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-fonts
+          ref: ${{ env.CRAFT_FONTS_REF }}
+          path: craft-fonts
       - name: Linux build dependencies (winit, wgpu, rfd, audio)
         run: |
           sudo apt-get update
@@ -43,4 +54,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: neoffice-ci
-      - run: cargo xtask ci
+      - name: Quality gate
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+        run: cargo xtask ci

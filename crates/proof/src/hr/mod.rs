@@ -36,11 +36,12 @@ pub fn dictionary() -> Arc<AffixDict> {
 
 fn load_installed() -> AffixDict {
     let Some((aff, dic)) = crate::hunspell::find(NAMES) else {
+        crate::hunspell::clear_load_error(NAMES[0]);
         log::info!("Croatian spelling: no Hunspell hr_HR dictionary installed");
         return AffixDict::default();
     };
 
-    crate::hunspell::load(&aff, &dic).unwrap_or_else(|e| {
+    crate::hunspell::note_load(NAMES[0], &dic, crate::hunspell::load(&aff, &dic)).unwrap_or_else(|e| {
         log::warn!("Croatian spelling: {e}");
         AffixDict::default()
     })
@@ -58,6 +59,13 @@ pub fn install_dictionary(aff: &str, dic: &str) -> Result<(), String> {
 /// [`crate::hunspell::set_dictionary_dir`] or a dictionary was installed).
 pub fn reload_dictionary() {
     *DICT.write().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// The `.dic` file of the Hunspell `hr_HR` dictionary found in the dictionaries folder or the
+/// system locations now (File › Options › Proofing shows it, #1063); `None` when there is none.
+/// A dictionary given with [`install_dictionary`] has no file and isn't reported.
+pub fn installed_path() -> Option<std::path::PathBuf> {
+    crate::hunspell::find(NAMES).map(|(_, dic)| dic)
 }
 
 /// Is a Croatian dictionary available (spelling is checked)?

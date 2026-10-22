@@ -6,9 +6,14 @@
 //!
 //! Differences from the desktop app: no TCP control channel; Open and Insert › Pictures use the
 //! browser file picker (bytes arrive through `Services::inbox`); Save and Export download.
+//! Preferences (theme, interface size, editing options…) are kept in `localStorage` (`prefs`).
 //! URL flags: `?webgl` forces WebGL2; `?sample` opens the sample document.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod prefs;
+#[cfg(any(target_arch = "wasm32", test))]
+mod save_fallback;
 // //// Neoffice — added modules: the page's URL flags, read as parameters by name (flags.rs), and where the Nora pane's
 // calls may go (nora_origin.rs). Their rules are plain Rust, built for the tests as well, so that they are tested natively.
 #[cfg(any(target_arch = "wasm32", test))]

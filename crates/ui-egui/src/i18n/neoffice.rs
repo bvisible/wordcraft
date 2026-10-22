@@ -7,7 +7,7 @@
 //!
 //! French is the first language here: Neoffice's customers read it. The other languages show these
 //! strings in English until someone adds them, except the two the interface looks up with the Nora pane
-//! closed (see [`COMPLETE_CATALOGS`]): upstream keeps four catalogs complete and its audit fails on a string
+//! closed (see [`COMPLETE_CATALOGS`]): upstream keeps nine catalogs complete and its audit fails on a string
 //! they lack.
 
 use super::Lang;
@@ -63,6 +63,12 @@ const COMPLETE_CATALOGS: &[(&str, &[(&str, &str)])] = &[
     ("hu", &[("Assistant", "Asszisztens"), ("Show the Nora assistant pane (experimental)", "Nora-asszisztens panel megjelenítése (kísérleti)")]),
     ("tr", &[("Assistant", "Asistan"), ("Show the Nora assistant pane (experimental)", "Nora asistan bölmesini göster (deneysel)")]),
     ("bg", &[("Assistant", "Асистент"), ("Show the Nora assistant pane (experimental)", "Показване на панела на асистента Nora (експериментално)")]),
+    // v0.10.0's audit keeps five more catalogs complete.
+    ("it", &[("Assistant", "Assistente"), ("Show the Nora assistant pane (experimental)", "Mostra il riquadro dell'assistente Nora (sperimentale)")]),
+    ("sv", &[("Assistant", "Assistent"), ("Show the Nora assistant pane (experimental)", "Visa Nora-assistentpanelen (experimentell)")]),
+    ("hr", &[("Assistant", "Asistent"), ("Show the Nora assistant pane (experimental)", "Prikaži okno asistenta Nora (eksperimentalno)")]),
+    ("pl", &[("Assistant", "Asystent"), ("Show the Nora assistant pane (experimental)", "Pokaż panel asystenta Nora (eksperymentalny)")]),
+    ("sl", &[("Assistant", "Pomočnik"), ("Show the Nora assistant pane (experimental)", "Prikaži podokno pomočnika Nora (eksperimentalno)")]),
 ];
 
 /// `s` in `lang`, when Neoffice has translated it.

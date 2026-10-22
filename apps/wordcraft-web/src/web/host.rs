@@ -12,10 +12,12 @@
 //!   WordCraft would otherwise download: Save and Save As, and the exports (PDF, plain text…).
 //!   The parent stores it, or offers it, by the file's extension.
 //! - `wordcraft:saved` (from the parent): `{ name, ok, error }`. Neoffice's addition: how storing
-//!   `name` went. `ok: false` marks the document unsaved again and says why in the status bar;
-//!   `ok: true` marks it saved again when it has not changed since it was handed over (a refused save
-//!   the user then settled, by replacing the other version, ends there). A parent that never answers
-//!   leaves the document saved once the file has been handed over, as upstream's bridges do.
+//!   `name` went. Each save handed over is a save that finishes later, on upstream's tickets
+//!   (`wordcraft_ui_egui::host_saves`, `async_saves`): until the parent answers it is not confirmed
+//!   (the leave-page guard warns); `ok: false` marks the document unsaved again and says why in the
+//!   status bar; a later `ok: true` for a save already refused marks it saved again when it has not
+//!   changed since it was handed over (a refused save the user then settled, by replacing the other
+//!   version, ends there). The Drive of the Suite and Neodesk answer every save.
 //! - `wordcraft:dirty` (to the parent): `{ dirty }` whenever unsaved changes appear or go away.
 //! - `wordcraft:failed` (to the parent): `{ error }` when the app couldn't start.
 //!
@@ -27,9 +29,9 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use wasm_bindgen::{JsCast as _, JsValue, closure::Closure};
+use wordcraft_ui_egui::async_saves::AsyncSaves;
+use wordcraft_ui_egui::host_saves::HostSaves;
 use wordcraft_ui_egui::{Inbox, Services};
-
-use super::PickerSaves;
 
 /// The longest user name taken from `?author=`.
 const MAX_AUTHOR_CHARS: usize = 200;
@@ -60,8 +62,10 @@ impl Bridge {
     }
 
     /// Sends every file the editor would download to the parent, tells it when unsaved changes
-    /// appear or go away, and hears its files and its answers to the saves.
-    pub fn connect(&self, services: &mut Services, inbox: Inbox, saves: Rc<PickerSaves>, ctx: egui::Context) {
+    /// appear or go away, and hears its files and its answers to the saves. Each save handed over
+    /// starts a ticket in `saves` (the app's) that the parent's answer ends; the shell settles the
+    /// parent's late answers with what this returns.
+    pub fn connect(&self, services: &mut Services, inbox: Inbox, saves: AsyncSaves, ctx: egui::Context) -> HostSaves {
         // A page that frames the editor has its own Drive and its own community: a text file is saved as text,
         // and the upstream project's links are not shown (`Services::keep_text_format`, `hide_community_links`).
         services.keep_text_format = true;
@@ -69,13 +73,15 @@ impl Bridge {
         // //// Neoffice — and it opens the documents: no Home, New or Open in the editor, no document dropped on it
         // (`Services::host_owns_documents`).
         services.host_owns_documents = true;
-        let handed = saves.clone();
-        self.listen(inbox, saves, ctx);
+        let host_saves = HostSaves::new(saves);
+        self.listen(inbox, host_saves.clone(), ctx);
         let bridge = self.clone();
+        let handed = host_saves.clone();
         services.download = Some(Box::new(move |path: &str, bytes: &[u8]| {
-            // The shell notes which revision of the document this was, on the next frame.
-            handed.handed.set(true);
-            bridge.post_save(path, bytes)
+            let name = bridge.post_save(path, bytes)?;
+            // Not confirmed until the parent answers; the shell notes which revision of the document this was.
+            handed.handed(&name);
+            Ok(())
         }));
         let bridge = self.clone();
         let own = services.on_dirty.take();
@@ -85,6 +91,7 @@ impl Bridge {
             }
             bridge.post_dirty(dirty);
         }));
+        host_saves
     }
 
     /// `?author=`: the host's name for the user, which signs comments and tracked changes.
@@ -107,15 +114,17 @@ impl Bridge {
         }
     }
 
-    fn post_save(&self, path: &str, bytes: &[u8]) -> Result<(), String> {
+    /// Hands `bytes` to the parent under the file name of `path`, which it returns (the name the parent's answer gives).
+    fn post_save(&self, path: &str, bytes: &[u8]) -> Result<String, String> {
         let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
         let buffer = js_sys::Uint8Array::from(bytes).buffer();
         let message = message(&[("type", "wordcraft:save".into()), ("name", name.as_str().into()), ("bytes", buffer.clone().into())])
             .ok_or_else(|| "couldn't build the message".to_string())?;
-        self.parent.post_message_with_transfer(&message, &self.origin, &js_sys::Array::of1(&buffer)).map_err(|e| reason(&e))
+        self.parent.post_message_with_transfer(&message, &self.origin, &js_sys::Array::of1(&buffer)).map_err(|e| reason(&e))?;
+        Ok(name)
     }
 
-    fn listen(&self, inbox: Inbox, saves: Rc<PickerSaves>, ctx: egui::Context) {
+    fn listen(&self, inbox: Inbox, saves: HostSaves, ctx: egui::Context) {
         let parent = self.parent.clone();
         let origin = self.origin.clone();
         let on_message = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
@@ -132,11 +141,11 @@ impl Bridge {
                 Some("wordcraft:saved") => {
                     let name = string(&data, "name").unwrap_or_default();
                     if js_sys::Reflect::get(&data, &JsValue::from_str("ok")).ok().and_then(|ok| ok.as_bool()) != Some(false) {
-                        saves.confirmed.borrow_mut().push(name);
+                        saves.answered(&name, Ok(()));
                     } else {
                         let error = string(&data, "error").filter(|e| !e.trim().is_empty()).unwrap_or_else(|| "the page did not say why".to_string());
                         log::error!("the hosting page could not save {name}: {error}");
-                        saves.refused.borrow_mut().push((name, error));
+                        saves.answered(&name, Err(error));
                     }
                 }
                 _ => return,

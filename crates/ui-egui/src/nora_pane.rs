@@ -104,6 +104,9 @@ const THE_PERSON_S: &[&str] = &[
     "edit.copyFormat",
     "edit.pasteFormat",
     "edit.formatPainter",
+    // The Spike (v0.10.0), the person's other clipboard: it cuts into it and pastes all it holds.
+    "edit.spike",
+    "edit.insertSpike",
     // The tools that take their next clicks, and their pens.
     "draw.pen",
     "draw.pencil",
@@ -126,6 +129,7 @@ const THE_PERSON_S: &[&str] = &[
     "review.ignoreAll",
     "font.add",
     "font.remove",
+    "font.loadSystem",
 ];
 
 /// What Nora may play in a WordCraft document, as far as the conversation decides it: everything but
@@ -244,7 +248,7 @@ fn run_document(app: &mut WordApp, ctx: &egui::Context, kind: &DocActionKind) ->
     app.session.close_typing();
     match result {
         Ok(value) => {
-            let steps = usize::try_from(app.session.undo_pushed().saturating_sub(before.pushed)).unwrap_or(usize::MAX);
+            let steps = usize::try_from(app.session.undo_mark().saturating_sub(before.pushed)).unwrap_or(usize::MAX);
             let after = app.session.rev();
             if steps == 0 && after == before.rev && app.session.document_id() == before.document {
                 return Ok(unchanged(value));
@@ -276,7 +280,7 @@ fn unchanged(value: Value) -> Value {
 struct Before {
     document: u64,
     rev: u64,
-    /// [`wordcraft_engine::Session::undo_pushed`]: what the action adds to it is the undo steps it took,
+    /// [`wordcraft_engine::Session::undo_mark`]: what the action adds to it is the undo steps it took,
     /// also at the undo limit.
     pushed: u64,
     /// Every undo step is kept: a batch may push many out of a full history.
@@ -292,7 +296,7 @@ impl Before {
         Before {
             document: s.document_id(),
             rev: s.rev(),
-            pushed: s.undo_pushed(),
+            pushed: s.undo_mark(),
             snapshot: s.edit_snapshot_whole(),
             view: s.view.clone(),
             pending: s.pending.clone(),
