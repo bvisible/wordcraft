@@ -1,0 +1,118 @@
+# //// Neoffice — added file (no upstream equivalent)
+# Why: Nora, the assistant of the Neoffice server, finds the commands of the editor open in front of
+# the person in a catalogue kept on the server (neoffice_theme/json/editor_commands_word.json). That
+# catalogue must be the editor's own list at the revision Neoffice serves, and only what the Nora pane
+# lets her play. This builds the CLI of that revision and writes its own list (`wordcraft-cli commands
+# --json`), then asks the pane about every command, through a test module added to nora_pane.rs on the
+# runner only (never committed), and keeps both as an artifact. The normaliser of
+# neoffice-theme turns them into the catalogue. Run it by hand from the Actions tab with the revision
+# the Suite pins (suite/drive/wopi/craft_editors.json). It reads the code only and needs no secret.
+name: Neoffice Nora catalogue
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Revision to export: the one the Suite pins (suite/drive/wopi/craft_editors.json)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  catalogue:
+    name: Commands and the pane's verdicts
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Linux build dependencies (winit, wgpu, rfd, audio)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev \
+            libxi-dev libgtk-3-dev libfontconfig1-dev libfreetype-dev libgl1-mesa-dev mesa-vulkan-drivers
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: neoffice-nora-catalogue
+      - name: The editor's own command list (wordcraft-cli commands --json)
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/catalogue"
+          mkdir -p "$OUT"
+          cargo build --locked -p wordcraft-cli
+          target/debug/wordcraft-cli commands --json > "$OUT/registry.json"
+      - name: The pane's verdict on every command (a test module added on the runner only)
+        env:
+          NEOFFICE_CATALOGUE_OUT: ${{ runner.temp }}/catalogue/pane.json
+        run: |
+          set -euo pipefail
+          cat >> crates/ui-egui/src/nora_pane.rs <<'RUST'
+
+          #[cfg(test)]
+          mod neoffice_catalogue_export {
+              #[test]
+              fn export() {
+                  // Refused whatever its parameters: is_the_person_s (the policy's families and THE_PERSON_S). A
+                  // command refused only with some parameters (the_person_s_with) stays: the pane decides per call.
+                  let session = wordcraft_engine::Session::new(wordcraft_doc::Document::new());
+                  let rows: Vec<serde_json::Value> = session
+                      .registry
+                      .all()
+                      .iter()
+                      .map(|c| serde_json::json!({"id": c.id, "mutates": c.mutates, "refused": super::is_the_person_s(c.id)}))
+                      .collect();
+                  let out = std::env::var("NEOFFICE_CATALOGUE_OUT").unwrap_or_else(|_| panic!("NEOFFICE_CATALOGUE_OUT is not set"));
+                  let text = serde_json::to_string_pretty(&rows).unwrap_or_else(|e| panic!("{e}"));
+                  std::fs::write(&out, text).unwrap_or_else(|e| panic!("{out}: {e}"));
+              }
+          }
+          RUST
+          cargo test --locked -p wordcraft-ui-egui --lib neoffice_catalogue_export -- --test-threads=1
+          test -s "$NEOFFICE_CATALOGUE_OUT"
+      - name: Where it comes from
+        env:
+          REPOSITORY: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/catalogue"
+          cargo metadata --locked --no-deps --format-version 1 > "$RUNNER_TEMP/metadata.json"
+          python3 -I - "$RUNNER_TEMP/metadata.json" "$OUT" <<'PY'
+          import json, os, subprocess, sys
+          metadata, out = sys.argv[1], sys.argv[2]
+          packages = {p["name"]: p["version"] for p in json.load(open(metadata))["packages"]}
+          registry = json.load(open(os.path.join(out, "registry.json")))
+          pane = json.load(open(os.path.join(out, "pane.json")))
+          # Both lists come from the same registry: a difference means the export is not what it says.
+          assert sorted(c["id"] for c in registry) == sorted(c["id"] for c in pane), "the CLI and the pane list other commands"
+          meta = {
+              "editor": "wordcraft",
+              "app": "word",
+              "repository": os.environ["REPOSITORY"],
+              "revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "version": packages["wordcraft-cli"],
+              "rustc": subprocess.check_output(["rustc", "--version"], text=True).strip(),
+              "run": os.environ["RUN_URL"],
+              "source": "wordcraft-cli commands --json",
+          }
+          json.dump(meta, open(os.path.join(out, "meta.json"), "w"), indent=2)
+          print(json.dumps(meta, indent=2), f"{len(registry)} commands, {sum(c['refused'] for c in pane)} refused by the pane")
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nora-catalogue-wordcraft
+          path: ${{ runner.temp }}/catalogue
+          if-no-files-found: error
