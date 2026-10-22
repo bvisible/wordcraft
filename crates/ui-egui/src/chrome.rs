@@ -394,8 +394,13 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
             let w = text_width(ui.painter(), &shown, &font, track, t.text);
             if available > 24.0 {
                 let rect = Rect::from_center_size(pos2(cx, full.center().y), vec2(w + 8.0, control_h));
-                let response = ui.interact(rect, ui.id().with("document_name"), Sense::click()).on_hover_text(tl!("Rename Document"));
-                response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &title));
+                // //// Neoffice — a hosting page names the document it opened (`Services::host_owns_documents`): the name is
+                // no Rename button there (Rename is refused, its next save would reach the page under another name).
+                let renames = !app.host_owns_documents();
+                let response = ui.interact(rect, ui.id().with("document_name"), if renames { Sense::click() } else { Sense::hover() });
+                let response = if renames { response.on_hover_text(tl!("Rename Document")) } else { response };
+                let kind = if renames { egui::WidgetType::Button } else { egui::WidgetType::Label };
+                response.widget_info(|| egui::WidgetInfo::labeled(kind, true, &title));
                 if response.clicked() {
                     let _ = app.run("file.rename", json!({}));
                 }

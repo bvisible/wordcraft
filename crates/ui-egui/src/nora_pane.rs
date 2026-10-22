@@ -54,9 +54,10 @@ const MAX_OBSERVED_CHARS: usize = 50_000;
 /// Parameter names that reach a file of the computer when they hold its name, as text: a command
 /// given one is refused. `path` also names a place in the document (a position's paragraph,
 /// `{"path": [0, 2], "off": 3}`, or a place in an equation), a list of numbers that reaches no file;
-/// `original` is the original document of a comparison. `dir` is no folder: it is a direction (Text
-/// Direction, moving in an equation), and no command of WordCraft reads a folder by `dir`.
-const FILE_KEYS: &[&str] = &["path", "paths", "file", "files", "filename", "folder", "directory", "original"];
+/// `original` is the original document of a comparison; `import` the bibliography file Manage Sources reads.
+/// `dir` is no folder: it is a direction (Text Direction, moving in an equation), and no command of
+/// WordCraft that Nora may play reads a folder by `dir` (`file.listTemplates` is refused as a `file.` command).
+const FILE_KEYS: &[&str] = &["path", "paths", "file", "files", "filename", "folder", "directory", "original", "import"];
 
 /// The command families the conversation refuses before an action reaches the pane, besides the
 /// default policy's (`file.`, `app.`), as `CommandPolicy` takes them (prefixes): the interface
@@ -1595,7 +1596,9 @@ mod tests {
         let ids: Vec<&str> = registry.all().iter().map(|spec| spec.id).collect();
         // A command an upstream merge adds is Nora's to run until someone decides otherwise: this count stops the merge
         // until the new commands have been looked at against the lists above (then it is updated).
-        assert_eq!(ids.len(), 622, "WordCraft's commands changed: decide which new ones are the person's, then update this count");
+        // v0.10.0 (638): the Spike and Load System Installed Fonts are the person's; the other thirteen are Nora's or refused
+        // by their family (`file.`, `view.`).
+        assert_eq!(ids.len(), 638, "WordCraft's commands changed: decide which new ones are the person's, then update this count");
         for entry in THE_PERSON_S {
             let known = match entry.strip_suffix('*') {
                 Some(prefix) => ids.iter().any(|id| id.starts_with(prefix)),
@@ -1639,6 +1642,8 @@ mod tests {
             "edit.copyFormat",
             "edit.pasteFormat",
             "edit.formatPainter",
+            "edit.spike",
+            "edit.insertSpike",
             "draw.pen",
             "draw.pencil",
             "draw.highlighter",
@@ -1656,6 +1661,7 @@ mod tests {
             "review.ignoreAll",
             "font.add",
             "font.remove",
+            "font.loadSystem",
         ];
         for id in &ids {
             let expected = families.iter().any(|family| id.starts_with(family)) || theirs.contains(id);

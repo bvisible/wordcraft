@@ -12,10 +12,13 @@
 //! The page has one answer a picker has not: after refusing a save (someone else saved the file since it was
 //! opened), it may store those same bytes once the person has settled it there (replacing the other version, or
 //! keeping a copy) and say `ok: true` again, with no save of that name still waiting. That marks the document saved
-//! again, if it has not changed since it was handed over ([`HostSaves::settle`]).
+//! again, if it has not changed since that file was handed over ([`HostSaves::settle`]).
+//!
+//! A page that never answers leaves its saves unconfirmed: the leave-page guard keeps warning. The Drive of the Suite
+//! and Neodesk answer every save, in the order they were made.
 
-use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 use crate::WordApp;
@@ -30,10 +33,11 @@ struct State {
     saves: AsyncSaves,
     /// Saves handed to the page and not answered, oldest first: the ticket each one started, and its file name.
     waiting: RefCell<VecDeque<(u64, String)>>,
-    /// A save was handed over since the shell last settled: it notes the document's revision then.
-    handed: Cell<bool>,
-    /// (revision, document id) of the document when it was last handed to the page.
-    handed_rev: Cell<Option<(u64, u64)>>,
+    /// Files handed over since the shell last settled: it notes the document's revision for them then.
+    handed: RefCell<Vec<String>>,
+    /// For each file name that, stored, saves the document (not an export): (revision, document id) of the document
+    /// when it was last handed over under that name.
+    handed_rev: RefCell<HashMap<String, (u64, u64)>>,
     /// Names the page said it stored when no save of them was waiting (a refused save the person then settled).
     confirmed: RefCell<Vec<String>>,
 }
@@ -44,8 +48,8 @@ impl HostSaves {
         Self(Rc::new(State {
             saves,
             waiting: RefCell::default(),
-            handed: Cell::new(false),
-            handed_rev: Cell::new(None),
+            handed: RefCell::default(),
+            handed_rev: RefCell::default(),
             confirmed: RefCell::default(),
         }))
     }
@@ -54,16 +58,18 @@ impl HostSaves {
     pub fn handed(&self, name: &str) {
         let ticket = self.0.saves.start();
         self.0.waiting.borrow_mut().push_back((ticket, name.to_string()));
-        self.0.handed.set(true);
+        self.0.handed.borrow_mut().push(name.to_string());
     }
 
     /// The page's answer for `name`: `Ok` when it stored it, the reason otherwise. It ends the oldest save of that name
-    /// still waiting. With none waiting, a stored file is the late answer of a save it refused before (see
-    /// [`Self::settle`]), and a refusal is only logged: the save it was for has already ended.
+    /// still waiting (an answer that names no file ends the oldest save). With none waiting, a stored file is the late
+    /// answer of a save it refused before (see [`Self::settle`]), and a refusal is only logged: the save it was for
+    /// has already ended.
     pub fn answered(&self, name: &str, result: Result<(), String>) {
         let waiting = {
             let mut waiting = self.0.waiting.borrow_mut();
-            waiting.iter().position(|(_, n)| n == name).and_then(|i| waiting.remove(i))
+            let i = if name.is_empty() { (!waiting.is_empty()).then_some(0) } else { waiting.iter().position(|(_, n)| n == name) };
+            i.and_then(|i| waiting.remove(i))
         };
         match (waiting, result) {
             (Some((ticket, _)), Ok(())) => self.0.saves.finish(ticket, SaveOutcome::Saved),
@@ -78,21 +84,32 @@ impl HostSaves {
         self.0.waiting.borrow().len()
     }
 
-    /// Called by the shell every frame, before the app's own pass: notes the revision of a document just handed over,
-    /// and marks it saved again when the page stored a save it had refused, if the document is still the one handed
-    /// over and has not changed since (a later edit is not in those bytes).
+    /// Called by the shell every frame, before the app's own pass: notes the revision of the document for a file just
+    /// handed over that saves it, and marks the document saved again when the page stored a save of it that it had
+    /// refused, if the document is still the one handed over under that name and has not changed since (a later edit
+    /// is not in those bytes; an export handed over meanwhile changes nothing). The refusal's message goes with it.
     pub fn settle(&self, app: &mut WordApp) {
         let now = (app.session.rev(), app.session.document_id());
-        if self.0.handed.replace(false) {
-            self.0.handed_rev.set(Some(now));
+        for name in std::mem::take(&mut *self.0.handed.borrow_mut()) {
+            if saves_the_document(app, &name) {
+                self.0.handed_rev.borrow_mut().insert(name, now);
+            }
         }
         for name in std::mem::take(&mut *self.0.confirmed.borrow_mut()) {
-            if self.0.handed_rev.get() == Some(now) && crate::keeps_everything(&name) {
+            if self.0.handed_rev.borrow().get(&name) == Some(&now) && saves_the_document(app, &name) {
                 app.session.dirty = false;
-                app.status_msg = None;
+                if app.status_msg.as_ref().is_some_and(|(message, _)| message.contains(name.as_str())) {
+                    app.status_msg = None;
+                }
             }
         }
     }
+}
+
+/// Whether a file of this name, stored, saves the document (as `WordApp::execute` marks it saved): a format that keeps
+/// everything, or the text file a hosting page opened, saved under its own name.
+fn saves_the_document(app: &WordApp, name: &str) -> bool {
+    crate::keeps_everything(name) || app.is_text_saved_in_place(name)
 }
 
 #[cfg(test)]
@@ -170,6 +187,34 @@ mod tests {
             host.settle(&mut app);
             assert_eq!(app.session.dirty, edit_after, "edited after the save: {edit_after}");
         }
+    }
+
+    #[test]
+    fn an_export_handed_over_after_a_refused_save_does_not_make_its_late_answer_save_a_later_edit() {
+        let (mut app, host, _) = hosted();
+        app.run("file.save", json!({"path": "letter.docx"})).unwrap();
+        host.settle(&mut app);
+        host.answered("letter.docx", Err("conflict".into()));
+        app.settle_async_saves();
+        app.run("text.insert", json!({"text": " and more"})).unwrap();
+        app.run("file.exportPdf", json!({"path": "letter.pdf"})).unwrap();
+        host.settle(&mut app);
+        host.answered("letter.pdf", Ok(()));
+        app.settle_async_saves();
+        // The page stores the refused bytes of letter.docx, which don't have the later edit.
+        host.answered("letter.docx", Ok(()));
+        host.settle(&mut app);
+        assert!(app.session.dirty, "the edit made after the refused save is still unsaved");
+    }
+
+    #[test]
+    fn an_answer_that_names_no_file_ends_the_oldest_save() {
+        let (mut app, host, saves) = hosted();
+        app.run("file.save", json!({"path": "letter.docx"})).unwrap();
+        host.answered("", Err("refused".into()));
+        app.settle_async_saves();
+        assert_eq!((saves.pending(), host.waiting()), (0, 0));
+        assert!(app.session.dirty);
     }
 
     #[test]

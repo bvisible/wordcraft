@@ -98,7 +98,9 @@ their own `//// Neoffice — added file` header.
   the page's answer, and a refusal takes upstream's own path (`settle_async_saves`, one marked line for "Couldn't
   save" instead of "Couldn't download"); it replaces the `PickerSaves` additions upstream's `web.rs` no longer
   has. The page's `ready`, `?author=` and the Nora pane's state are applied after the preferences upstream's
-  browser build now keeps (`prefs.rs`, `localStorage`). Without `?host=parent` the editor behaves as before.
+  browser build now keeps (`prefs.rs`, `localStorage`); with a hosting page, the name and initials stored on an
+  earlier visit are not taken (perhaps someone else's, on a shared browser) and the page's file names are not
+  kept in the stored Recent list. Without `?host=parent` the editor behaves as before.
   Drop it when upstream ships its own bridge for WordCraft, keeping `wordcraft:saved`.
 
 - **What a hosting page changes about the editor** (`Services::keep_text_format` and
@@ -112,7 +114,9 @@ their own `//// Neoffice — added file` header.
 
 - **A hosting page opens the documents** (`Services::host_owns_documents`, set by
   `apps/wordcraft-web/src/web/host.rs`, so only when a page frames the editor with `?host=parent`): the editor does not
-  switch to another document by itself. New, Open, Close, New from Template, Recover and the Mailings commands that
+  switch to another document by itself. New, Open, Close, New from Template, Recover, Rename (v0.10.0: the next save
+  would reach the page under another name), a comparison shown in the revised or a new document (the page's document
+  would become an untitled one) and the Mailings commands that
   make a new document are refused with a status message (`run` in `crates/ui-egui/src/lib.rs`, `switches_document`),
   File › Home, New, Open, Recover (v0.10.0) and Close are not pages of the File menu (`backstage.rs`) and no Start screen shows, and a document
   dropped on the editor is not taken (`opens_as_document`, asked by `apps/wordcraft-web/src/web.rs`); the file the page

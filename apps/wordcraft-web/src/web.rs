@@ -90,6 +90,8 @@ pub fn start() {
                     // Pasted pictures wait apart from dropped files: the app inserts one only when the page is the edit target (#1349).
                     app.services.pasted = Some(pasted);
                     app.autosave = false;
+                    // //// Neoffice — who signs before the stored preferences (see below).
+                    let unsigned = (app.session.author.clone(), app.session.initials.clone());
                     // Preferences from an earlier visit (#2132), as the desktop app reads `ui.json`.
                     let stored = stored_prefs();
                     crate::prefs::restore(&mut app, stored.as_deref());
@@ -101,10 +103,12 @@ pub fn start() {
                     }
                     let prefs = crate::prefs::PrefsSync::new(stored);
                     // //// Neoffice — after the preferences of an earlier visit, which would win otherwise: the hosting page
-                    // learns the editor listens and names the user who signs the comments (`?author=`, over the stored
-                    // name), and the Nora pane is open when the page connects Nora and closed when it doesn't (a pane left
-                    // open on a visit that had Nora would say she isn't available on one that hasn't).
+                    // learns the editor listens and names the user who signs the comments (`?author=`; the name and
+                    // initials stored on an earlier visit, perhaps someone else's on a shared browser, are not taken),
+                    // and the Nora pane is open when the page connects Nora and closed when it doesn't (a pane left open
+                    // on a visit that had Nora would say she isn't available on one that hasn't).
                     if let Some(bridge) = &app_bridge {
+                        (app.session.author, app.session.initials) = unsigned;
                         if let Some(author) = host::Bridge::author() {
                             app.session.author = author;
                         }
@@ -198,6 +202,11 @@ impl eframe::App for WebShell {
             host_saves.settle(&mut self.app);
         }
         self.app.logic(ctx);
+        // //// Neoffice — the hosting page's file names are not kept in the browser's storage (its Recent list: Home
+        // and Open are not offered when a page hosts the editor).
+        if self.host_saves.is_some() {
+            self.app.ui.recent.clear();
+        }
         // Store changed preferences straight away: a reload or closed tab runs no exit code (#2132).
         if let Some(json) = self.prefs.changed(&self.app) {
             match local_storage() {

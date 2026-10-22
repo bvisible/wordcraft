@@ -1091,7 +1091,10 @@ impl WordApp {
             if let Some(d) = &self.services.download
                 && let Err(e) = d(&name, &bytes)
             {
-                let msg = i18n::fmt(tl!("Couldn't download {name}: {error}"), &[("name", &name), ("error", &e)]);
+                // //// Neoffice — a page that opens the documents also stores them (`host_saves`): a save, not a download.
+                let failed =
+                    if self.services.host_owns_documents { tl!("Couldn't save {name}: {error}") } else { tl!("Couldn't download {name}: {error}") };
+                let msg = i18n::fmt(failed, &[("name", &name), ("error", &e)]);
                 log::error!("download of {name} failed: {e}");
                 self.status(msg.clone());
                 return Err(msg);
@@ -2974,16 +2977,23 @@ pub(crate) fn discards_document(id: &str, params: &Value) -> bool {
 
 // //// Neoffice — added: what a hosting page's editor must not do by itself. Everything [`discards_document`] says,
 // and the commands that bring another document in without discarding the current one first (the picker of Open, a
-// template, a recovered file): once the page owns the documents, none of them is the editor's to run.
+// template, a recovered file), that rename the page's document (v0.10.0's Rename: its next save would reach the page
+// under another name, as a copy), or that turn it into an untitled one (a comparison shown in the revised or a new
+// document): once the page owns the documents, none of them is the editor's to run.
 fn switches_document(id: &str, params: &Value) -> bool {
-    discards_document(id, params) || matches!(id, "file.open" | "file.recover" | "file.newFromTemplate")
+    // An `original` file given replaces the document with it as well.
+    let shown_elsewhere =
+        || params.get("showIn").and_then(Value::as_str).unwrap_or("original") != "original" || params.get("original").is_some_and(|v| !v.is_null());
+    discards_document(id, params)
+        || matches!(id, "file.open" | "file.recover" | "file.newFromTemplate" | "file.rename")
+        || (matches!(id, "review.compare" | "review.combine") && shown_elsewhere())
 }
 
 // //// Neoffice — added: the commands an editor whose hosting page opens the documents does not offer (in its command
 // search, its Quick Access Toolbar menu): they bring another document in or take the page's away, and `run` refuses
 // them anyway. The mail merge ones that only add to the document (an envelope, a merged file) stay.
 pub(crate) fn hidden_from_a_host(id: &str) -> bool {
-    matches!(id, "file.new" | "file.open" | "file.close" | "file.recover" | "file.newFromTemplate" | "mailings.labels")
+    matches!(id, "file.new" | "file.open" | "file.close" | "file.recover" | "file.newFromTemplate" | "file.rename" | "mailings.labels")
 }
 
 // //// Neoffice — added, see [`Services::host_owns_documents`].
@@ -7660,6 +7670,9 @@ mod tests {
             ("file.recover", json!({})),
             ("file.newFromTemplate", json!({"template": "letter"})),
             ("mailings.labels", json!({})),
+            // v0.10.0's Rename, and a comparison shown in a new document: the page's document would be renamed, or untitled.
+            ("file.rename", json!({"name": "Autre"})),
+            ("review.compare", json!({"text": "Un autre texte", "showIn": "new"})),
         ] {
             assert!(a.run(id, params).is_err(), "{id} is the page's, not the editor's");
             assert_eq!(a.session.document_id(), before, "{id}: still the page's document");

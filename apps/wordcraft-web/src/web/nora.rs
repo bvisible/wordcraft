@@ -4,8 +4,9 @@
 //!
 //! Nora lives on the Neoffice server, so the editor needs the session of whoever hosts it. The page
 //! that hosts the editor turns the connection on in its URL with `?nora`: the calls go to the page's
-//! own origin, as for an editor served by the instance itself. The pane then opens by itself, as the
-//! browser build keeps no setting between visits. The address names another origin
+//! own origin, as for an editor served by the instance itself. The pane then opens by itself, whatever
+//! the preferences the browser build keeps between visits say (since v0.10.0), and stays closed when no
+//! connection is offered. The address names another origin
 //! (`?nora=<origin>`) only for the workshop's stand-in server, loopback to loopback; any other origin
 //! it names is refused, said in the console, and the page's own is used (`crate::nora_origin` has the
 //! rules), so that a link can't send the person's messages and document elsewhere.
