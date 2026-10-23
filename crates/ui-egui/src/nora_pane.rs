@@ -727,7 +727,15 @@ fn context_of(app: &mut WordApp) -> PageContext {
 /// The pane's bubbles in WordCraft's own colors, light or dark.
 fn style(ui: &Ui) -> NoraStyle {
     let t = crate::theme::Tokens::get(ui.ctx());
-    NoraStyle { user_fill: Some(t.accent), user_text: Some(t.on_accent), nora_fill: Some(t.hover), nora_text: Some(t.text), ..NoraStyle::default() }
+    NoraStyle {
+        user_fill: Some(t.accent),
+        user_text: Some(t.on_accent),
+        nora_fill: Some(t.hover),
+        nora_text: Some(t.text),
+        // The pane's bold words in the app's own bold face.
+        bold_family: Some("semibold"),
+        ..NoraStyle::default()
+    }
 }
 
 /// The words of the pane in the interface language. The pane's title bar is WordCraft's own, so the
