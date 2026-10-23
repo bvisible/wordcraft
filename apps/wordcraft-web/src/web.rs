@@ -77,8 +77,7 @@ pub fn start() {
                     let mut services = services(inbox.clone(), cc.egui_ctx.clone(), dirty, saves.clone(), messages.clone());
                     // //// Neoffice — the hosting page gets the saves and the unsaved-changes flag, and sends files. Each save it
                     // is handed finishes when it answers, on upstream's tickets (`host_saves`).
-                    let host_saves =
-                        app_bridge.as_ref().map(|bridge| bridge.connect(&mut services, inbox.clone(), saves.clone(), cc.egui_ctx.clone()));
+                    let host_saves = app_bridge.as_ref().map(|bridge| bridge.connect(&mut services, saves.clone(), cc.egui_ctx.clone()));
                     // //// Neoffice — a page that asks for Nora (`?nora`) gets the pane, connected with the page's own
                     // session at the page's own origin (an origin `?nora=` names only as `crate::nora_origin` allows).
                     // A host that makes the calls itself (`wordcraftNoraCall`, the Drive, Neodesk) turns it on the same way.
@@ -282,10 +281,15 @@ fn services(inbox: Inbox, ctx: egui::Context, dirty: Rc<Cell<bool>>, saves: Asyn
     let save_ctx = ctx.clone();
     let font_ctx = ctx.clone();
     let font_messages = messages.clone();
+    // //// Neoffice — the status bar says why a picked file was not taken (`picked_file_fits` below).
+    let pick_messages = messages.clone();
     Services {
         open_async: Some(Box::new(move |purpose: &str| {
             let inbox = open_inbox.clone();
             let ctx = ctx.clone();
+            // //// Neoffice — what the file is picked for, and where a refusal is said (see below).
+            let purpose_picked = purpose.to_string();
+            let refused = pick_messages.clone();
             let dialog = if purpose == "picture" {
                 rfd::AsyncFileDialog::new().add_filter("Pictures", IMAGE_EXTS)
             } else if purpose == "font" {
@@ -300,6 +304,15 @@ fn services(inbox: Inbox, ctx: egui::Context, dirty: Rc<Cell<bool>>, saves: Asyn
                 // Add Font takes every selected file (#1789); the others one.
                 let files = if many { dialog.pick_files().await.unwrap_or_default() } else { dialog.pick_file().await.into_iter().collect() };
                 for file in files.into_iter().take(MAX_PICKED_FILES) {
+                    // //// Neoffice — the picker's filter is only a suggestion: a file picked for a picture, a font or a
+                    // recipient list that is none of these never reaches the inbox, which would open it as the document.
+                    let name = file.file_name();
+                    if !wordcraft_ui_egui::picked_file_fits(&purpose_picked, &name) {
+                        log::info!("{name} was picked for a {purpose_picked} and is none: not taken");
+                        refused.borrow_mut().push(wordcraft_ui_egui::picked_file_refused(&purpose_picked, &name));
+                        ctx.request_repaint();
+                        continue;
+                    }
                     let mut bytes = file.read().await;
                     let mut pending = inbox.lock().unwrap_or_else(|e| e.into_inner());
                     // Fonts waiting for the app to drain them stay under a byte cap. A file
@@ -308,7 +321,8 @@ fn services(inbox: Inbox, ctx: egui::Context, dirty: Rc<Cell<bool>>, saves: Asyn
                     if many && held.saturating_add(bytes.len()) > MAX_PENDING_PICKED_BYTES {
                         bytes = Vec::new();
                     }
-                    pending.push((file.file_name(), bytes));
+                    // //// Neoffice — the name read above (`picked_file_fits`).
+                    pending.push((name, bytes));
                     drop(pending);
                     ctx.request_repaint();
                 }

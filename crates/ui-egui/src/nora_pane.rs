@@ -458,6 +458,11 @@ fn the_person_s_with(id: &str, params: &Value) -> Option<&'static str> {
         // These parameters are the person's settings.
         "review.wordCount" if given("includeTextBoxes") => Some("`includeTextBoxes` is the person's setting for counting words"),
         "review.language" if given("detect") => Some("`detect` is the person's setting"),
+        // `default: true` also saves the language as the person's own for their future blank documents (a preference kept
+        // outside the document); the language of the text itself (`default` absent or false) stays Nora's.
+        "review.language" if params.get("default").and_then(Value::as_bool) == Some(true) => {
+            Some("`default` would also save the person's language for their future documents, outside this one")
+        }
         // Without the template's bytes, the template the document names is read from the computer.
         "tools.updateStyles" if !text("data") => Some("without `data`, it would read the attached template, a file of the computer"),
         // Replace with `^c` is the person's clipboard; without `with` or `text`, Replace uses what they typed last
@@ -1539,6 +1544,7 @@ mod tests {
             ("review.trackingOptions", json!({"balloons": "inline"})),
             ("review.wordCount", json!({"includeTextBoxes": true})),
             ("review.language", json!({"detect": false})),
+            ("review.language", json!({"lang": "de-DE", "default": true})),
             ("review.addToDictionary", json!({"word": "qqnorazzword"})),
             ("review.ignoreAll", json!({"word": "qqnorazzword"})),
             ("font.add", json!({"data": "AAAA", "name": "Nora.ttf"})),
@@ -1550,6 +1556,11 @@ mod tests {
         assert_eq!(serde_json::to_value(&a.session.keymap).unwrap(), keys);
         assert_eq!(serde_json::to_value(&a.session.ribbon).unwrap(), ribbon);
         play(&mut a, "review.wordCount", json!({})).unwrap();
+        // The language of the text itself is the document's: Nora sets it, the person's saved language stays.
+        for params in [json!({"lang": "fr-CH"}), json!({"lang": "fr-CH", "default": false})] {
+            play(&mut a, "review.language", params).unwrap();
+        }
+        assert!(a.session.prefs.default_language == prefs.default_language, "the saved language is the person's");
     }
 
     /// A file of the computer is reached by other names than `path`: the original of a comparison, the template the

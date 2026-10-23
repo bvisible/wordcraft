@@ -38,6 +38,12 @@ pub const FRENCH: &[(&str, &str)] = &[
     ("Undo the last change", "Annuler la dernière modification"),
     ("Send", "Envoyer"),
     ("Couldn't save {name}: {error}", "Impossible d'enregistrer {name} : {error}"),
+    ("{name} can't be inserted as a picture: nothing was inserted.", "{name} ne peut pas être inséré comme image : rien n'a été inséré."),
+    ("{name} can't be added as a font: nothing was added.", "{name} ne peut pas être ajouté comme police : rien n'a été ajouté."),
+    (
+        "{name} can't be loaded as a recipient list: nothing was loaded.",
+        "{name} ne peut pas être chargé comme liste de destinataires : rien n'a été chargé.",
+    ),
     ("This document is opened from the page that hosts the editor.", "Ce document est ouvert depuis la page qui héberge l'éditeur."),
     ("There is nothing of Nora's to undo.", "Il n'y a aucune modification de Nora à annuler."),
     (

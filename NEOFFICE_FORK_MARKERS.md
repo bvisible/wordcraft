@@ -63,7 +63,8 @@ their own `//// Neoffice — added file` header.
   failed action back with `Session::edit_snapshot_whole`, added in `crates/engine/src/session.rs` (marked):
   `undo_depth` stops growing there, and `edit_snapshot` keeps only the oldest four steps. The Spike
   (`edit.spike`, `edit.insertSpike`, v0.10.0) and Load System Installed Fonts are the person's, refused like
-  the clipboard and the fonts they added.
+  the clipboard and the fonts they added; so is Set Proofing Language with `default: true`, which also saves the
+  language for the person's future documents (the language of the text itself stays Nora's).
   Her strings are translated outside upstream's catalogs, in the new file
   `crates/ui-egui/src/i18n/neoffice.rs` (French), which `i18n::tr` falls back to (one marked line in
   `crates/ui-egui/src/i18n/mod.rs`).
@@ -119,7 +120,11 @@ their own `//// Neoffice — added file` header.
   would become an untitled one) and the Mailings commands that
   make a new document are refused with a status message (`run` in `crates/ui-egui/src/lib.rs`, `switches_document`),
   File › Home, New, Open, Recover (v0.10.0) and Close are not pages of the File menu (`backstage.rs`) and no Start screen shows, and a document
-  dropped on the editor is not taken (`opens_as_document`, asked by `apps/wordcraft-web/src/web.rs`); the file the page
+  dropped on the editor is not taken (`opens_as_document`, asked by `apps/wordcraft-web/src/web.rs`); in every browser
+  build, a file picked for a picture, a font or a recipient list that is none of these is not taken either
+  (`picked_file_fits`, asked by the picker in `web.rs`: the picker's filter is only a suggestion, and the inbox would
+  open it as the document); the page's own files arrive in an inbox of their own (`Services::host_inbox`, filled by
+  `host.rs`), and only they lift the guard: a document picked or dropped by the person is refused by it; the file the page
   hands over still opens (`drain_inbox` lifts the guard for it). Before, File › New or Open in a hosted window replaced
   the document of the page with another one the page knew nothing about. Every other build behaves as before.
 

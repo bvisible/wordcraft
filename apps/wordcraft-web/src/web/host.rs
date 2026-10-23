@@ -7,7 +7,8 @@
 //!
 //! - `wordcraft:ready` (to the parent): `{ version }`, the app is listening; send the file now.
 //! - `wordcraft:open` (from the parent): `{ name, bytes, id? }`, `bytes` an `ArrayBuffer` or
-//!   `Uint8Array`. It opens like a document picked with File › Open or dropped on the window.
+//!   `Uint8Array`. It opens as the document, through an inbox of its own (`Services::host_inbox`): it is
+//!   the only file that may replace the document, a document the person picks or drops is refused.
 //!   Neoffice's addition: `id`, the page's own name for the file (the Drive's file id), which Nora's
 //!   pane tells Nora with each message about that document (`Services::nora_file`); a page that sends
 //!   none changes nothing.
@@ -68,7 +69,7 @@ impl Bridge {
     /// appear or go away, and hears its files and its answers to the saves. Each save handed over
     /// starts a ticket in `saves` (the app's) that the parent's answer ends; the shell settles the
     /// parent's late answers with what this returns.
-    pub fn connect(&self, services: &mut Services, inbox: Inbox, saves: AsyncSaves, ctx: egui::Context) -> HostSaves {
+    pub fn connect(&self, services: &mut Services, saves: AsyncSaves, ctx: egui::Context) -> HostSaves {
         // A page that frames the editor has its own Drive and its own community: a text file is saved as text,
         // and the upstream project's links are not shown (`Services::keep_text_format`, `hide_community_links`).
         services.keep_text_format = true;
@@ -80,6 +81,10 @@ impl Bridge {
         // The page's name for each file it sends, which Nora's pane reads (`nora_pane::named_file`).
         let file = NoraFile::default();
         services.nora_file = Some(file.clone());
+        // The page's files go to their own inbox: only they open with the guard of `host_owns_documents` lifted, never
+        // a document the person picks or drops (`Services::host_inbox`).
+        let inbox = Inbox::default();
+        services.host_inbox = Some(inbox.clone());
         self.listen(inbox, file, host_saves.clone(), ctx);
         let bridge = self.clone();
         let handed = host_saves.clone();

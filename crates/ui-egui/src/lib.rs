@@ -210,6 +210,10 @@ pub struct Services {
     /// command that would replace or close the document is refused (the page's own file still opens). It also stores
     /// what the editor saves ([`host_saves`]).
     pub host_owns_documents: bool,
+    // //// Neoffice — the files the hosting page hands over, apart from `inbox` (what the person picks or drops): only
+    // these open with the guard of `host_owns_documents` lifted.
+    /// The files a hosting page sends to be the document, delivered asynchronously like [`Services::inbox`].
+    pub host_inbox: Option<Inbox>,
     /// Desktop: the app's own user templates folder (`Templates` in the settings folder, #2852),
     /// used while File › Options names none. File › New lists personal templates from it and Save
     /// as Word Template starts in it. `None` (web) hides personal templates.
@@ -2644,12 +2648,30 @@ impl WordApp {
     /// Files that arrived asynchronously (web picker, drops): documents open, pictures insert,
     /// recipient lists (CSV/TSV, spreadsheets, or a text file asked for as one) load as recipients.
     fn drain_inbox(&mut self) {
-        let Some(inbox) = self.services.inbox.clone() else { return };
-        let files = std::mem::take(&mut *inbox.lock().unwrap_or_else(|e| e.into_inner()));
+        // //// Neoffice — the hosting page's files first, marked as the page's (`Services::host_inbox`): only they lift
+        // the guard of `host_owns_documents`; a document the person picked or dropped does not.
+        let take =
+            |inbox: &Option<Inbox>| inbox.as_ref().map(|i| std::mem::take(&mut *i.lock().unwrap_or_else(|e| e.into_inner()))).unwrap_or_default();
+        let files: Vec<(String, Vec<u8>, bool)> = take(&self.services.host_inbox)
+            .into_iter()
+            .map(|(name, bytes)| (name, bytes, true))
+            .chain(take(&self.services.inbox).into_iter().map(|(name, bytes)| (name, bytes, false)))
+            .collect();
         let mut placed_picture = false;
-        for (name, bytes) in files {
+        // //// Neoffice — each file says whether the hosting page sent it (see above).
+        for (name, bytes, from_host) in files {
             let lower = name.to_ascii_lowercase();
             let img = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".wmf", ".emf"].iter().any(|e| lower.ends_with(e));
+            // //// Neoffice — a hosting page's file is the document: it opens, whatever a recipient list pick left pending.
+            if from_host {
+                self.host_switch_allowed = true;
+                let opened = self.run("file.open", json!({"path": name, "data": wordcraft_engine::cmd::insert::base64_encode(&bytes)}));
+                self.host_switch_allowed = false;
+                if opened.is_ok() {
+                    self.ui.backstage = false;
+                }
+                continue;
+            }
             // Any recipient file ends the pending picker request, so a later .txt drop opens normally.
             let asked = std::mem::take(&mut self.recipient_list_pending);
             let list = lower.ends_with(".csv") || lower.ends_with(".tsv") || (lower.ends_with(".txt") && asked);
@@ -2667,13 +2689,10 @@ impl WordApp {
                 placed_picture = Self::placed_in_text(&r);
                 r
             } else {
-                // //// Neoffice — the file the hosting page hands over is the one open the guard of
-                // `Services::host_owns_documents` lets through; a document dropped by the person was dropped
-                // before it got here (the web shell asks `opens_as_document`).
-                self.host_switch_allowed = true;
-                let opened = self.run("file.open", json!({"path": name, "data": wordcraft_engine::cmd::insert::base64_encode(&bytes)}));
-                self.host_switch_allowed = false;
-                opened
+                // //// Neoffice — only the file the hosting page hands over (`host_inbox`, opened above) passes the guard of
+                // `Services::host_owns_documents`; a document the person dropped or picked is refused by it (the web shell
+                // also leaves out such a drop, `opens_as_document`, and such a pick, `picked_file_fits`).
+                self.run("file.open", json!({"path": name, "data": wordcraft_engine::cmd::insert::base64_encode(&bytes)}))
             };
             if r.is_ok() {
                 self.ui.backstage = false;
@@ -3013,10 +3032,40 @@ pub(crate) fn hidden_from_a_host(id: &str) -> bool {
 /// documents drops these (the web shell asks), and keeps the rest.
 pub fn opens_as_document(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    let picture = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"].iter().any(|e| lower.ends_with(e));
-    let sheet = [".xlsx", ".xlsm", ".ods"].iter().any(|e| lower.ends_with(e));
+    let picture = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".wmf", ".emf"].iter().any(|e| lower.ends_with(e));
+    let sheet = [".xlsx", ".xlsm", ".xls", ".ods"].iter().any(|e| lower.ends_with(e));
     let list = lower.ends_with(".csv") || lower.ends_with(".tsv");
     !(picture || sheet || list || wordcraft_fonts::is_font_file_name(&lower))
+}
+
+// //// Neoffice — added: a file the person picks in the browser for a picture, a font or a recipient list arrives in the
+// same inbox as a document dropped or handed over by a hosting page, and the inbox opens whatever is no picture, font or
+// list as the document (with the hosting page's guard lifted for it). The browser's picker only suggests its filter (a
+// system may let the person choose any file), so the web shell takes a picked file only when it is of the kind asked for.
+/// Whether a file picked in the browser for `purpose` (`picture`, `font`, `recipients`; anything else is a document) is
+/// of that kind, by its name as the inbox reads it: a picture is inserted, a font added, a list loaded, never a document
+/// opened in their place.
+pub fn picked_file_fits(purpose: &str, name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    // As the inbox reads it (`is_spreadsheet_name`): a name that is only an extension (`.xlsx`) has none.
+    let extension = std::path::Path::new(&lower).extension().and_then(|e| e.to_str()).unwrap_or_default();
+    match purpose {
+        "picture" => ["png", "jpg", "jpeg", "gif", "webp", "bmp", "wmf", "emf"].contains(&extension),
+        "font" => wordcraft_fonts::is_font_file_name(&lower),
+        "recipients" => wordcraft_engine::cmd::mailings::RECIPIENT_EXTENSIONS.contains(&extension),
+        _ => true,
+    }
+}
+
+// //// Neoffice — added, see [`picked_file_fits`].
+/// What the status bar says of a picked file [`picked_file_fits`] turned down.
+pub fn picked_file_refused(purpose: &str, name: &str) -> String {
+    let message = match purpose {
+        "font" => tl!("{name} can't be added as a font: nothing was added."),
+        "recipients" => tl!("{name} can't be loaded as a recipient list: nothing was loaded."),
+        _ => tl!("{name} can't be inserted as a picture: nothing was inserted."),
+    };
+    i18n::fmt(message, &[("name", name)])
 }
 
 /// Wall-clock milliseconds since the Unix epoch: the system clock, or the browser's on the web.
@@ -7669,7 +7718,8 @@ mod tests {
     #[test]
     fn a_host_that_opens_the_documents_keeps_the_editor_on_its_document() {
         let inbox: Inbox = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let services = Services { host_owns_documents: true, inbox: Some(inbox.clone()), ..Default::default() };
+        let host_inbox: Inbox = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let services = Services { host_owns_documents: true, inbox: Some(inbox.clone()), host_inbox: Some(host_inbox.clone()), ..Default::default() };
         let mut a = WordApp::new(Session::new(wordcraft_doc::Document::from_text("Le devis du client")), services);
         let before = a.session.document_id();
         for (id, params) in [
@@ -7694,9 +7744,15 @@ mod tests {
         a.session.dirty = true;
         assert!(a.run("file.new", json!({})).is_err());
         assert!(a.dialog.is_none());
-        // The page's own file opens, and the guard is up again after it.
+        // A document the person picked or dropped (the shared inbox) does not lift the guard: it is refused.
         a.session.dirty = false;
-        inbox.lock().unwrap().push(("Page.txt".into(), b"Le texte que la page donne.\n".to_vec()));
+        inbox.lock().unwrap().push(("Picked.txt".into(), b"Un document choisi par la personne.\n".to_vec()));
+        a.drain_inbox();
+        assert_eq!(a.session.document_id(), before, "a picked document is not the page's");
+        // The page's own file opens, and the guard is up again after it, even with a recipient list pick left pending
+        // (a `.txt` would load as a list).
+        a.recipient_list_pending = true;
+        host_inbox.lock().unwrap().push(("Page.txt".into(), b"Le texte que la page donne.\n".to_vec()));
         a.drain_inbox();
         assert_ne!(a.session.document_id(), before, "the page's file replaced the document");
         assert!(a.run("file.new", json!({})).is_err());
@@ -7717,13 +7773,50 @@ mod tests {
         assert_eq!(a.ui.backstage_page, "open");
     }
 
+    // //// Neoffice — what the web shell asks before it takes a file the person picked for a picture, a font or a list.
+    #[test]
+    fn a_file_picked_for_a_picture_a_font_or_a_list_is_never_taken_as_a_document() {
+        for (purpose, name) in [
+            ("picture", "photo.JPG"),
+            ("picture", "logo.png"),
+            ("picture", "drawing.emf"),
+            ("font", "Inter-Regular.ttf"),
+            ("font", "Family.OTF"),
+            ("recipients", "people.csv"),
+            ("recipients", "people.txt"),
+            ("recipients", "people.xlsx"),
+            ("document", "letter.docx"),
+            ("document", "notes.txt"),
+        ] {
+            assert!(picked_file_fits(purpose, name), "{purpose}: {name}");
+        }
+        for (purpose, name) in [
+            ("picture", "letter.docx"),
+            ("picture", "notes.txt"),
+            ("picture", "png"),
+            ("picture", "letter.docx.png.rtf"),
+            ("font", "letter.docx"),
+            ("font", "picture.png"),
+            ("recipients", "letter.docx"),
+            ("recipients", "page.html"),
+            ("recipients", ".xlsx"),
+        ] {
+            assert!(!picked_file_fits(purpose, name), "{purpose}: {name}");
+            // What the inbox would have done with it: open it as the document.
+            let message = picked_file_refused(purpose, name);
+            assert!(message.contains(name) && message.contains("nothing"), "{message}");
+        }
+    }
+
     // //// Neoffice — what the web shell asks before it takes a file dropped on an editor whose page opens documents.
     #[test]
     fn a_dropped_picture_font_or_list_is_not_a_document() {
         for name in ["a.docx", "A.TXT", "notes.md", "b.rtf", "c.odt", "d.html", "dropped"] {
             assert!(opens_as_document(name), "{name}");
         }
-        for name in ["p.PNG", "p.jpeg", "w.webp", "t.xlsx", "t.ods", "people.csv", "people.TSV", "Uifont-Regular.ttf", "f.otf"] {
+        for name in
+            ["p.PNG", "p.jpeg", "w.webp", "d.WMF", "d.emf", "t.xlsx", "t.xls", "t.ods", "people.csv", "people.TSV", "Uifont-Regular.ttf", "f.otf"]
+        {
             assert!(!opens_as_document(name), "{name}");
         }
     }
