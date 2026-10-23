@@ -371,6 +371,7 @@ fn apply(app: &mut WordApp, ctx: &egui::Context, kind: &DocActionKind) -> Result
         DocActionKind::Undo => undo(app),
         DocActionKind::Print => print(app),
         DocActionKind::ExportPdf => export_pdf(app),
+        DocActionKind::ExportFile => export_file(app),
     }
 }
 
@@ -651,19 +652,42 @@ fn undo(app: &mut WordApp) -> Result<Value, String> {
 }
 
 /// The print dialog on the document, as File › Print makes it (`printing::submit`): the person chooses and confirms
-/// there, nothing is printed before.
+/// there, nothing is printed before. Where the editor has printers of its own (`print_native`, which prints without a
+/// dialog once a printer is chosen), its Print page opens instead: the person picks the printer and prints there.
 fn print(app: &mut WordApp) -> Result<Value, String> {
+    if app.services.print_native.is_some() {
+        app.run("file.print", json!({}))?;
+        return Ok(json!({"dialog": true, "page": "print", "changed": false}));
+    }
     crate::printing::submit(app, &json!({}))?;
     Ok(json!({"dialog": true, "changed": false}))
 }
 
+/// What Nora is told when she asks for the PDF of a document opened with its password: it would leave in clear.
+const PROTECTED_STAYS: &str = "this document was opened with its password: its PDF is never handed over in clear for an e-mail, the person \
+joins the document from NeoMail";
+
 /// The document's PDF, as File › Export › PDF makes it, handed to Nora for an e-mail draft (craft-nora's
-/// `pdf_result`: in base64, refused past its size).
+/// `pdf_result`: in base64, refused past its size). Never the PDF of a document that has a password.
 fn export_pdf(app: &mut WordApp) -> Result<Value, String> {
+    if app.session.password.is_some() {
+        return Err(PROTECTED_STAYS.to_string());
+    }
     let name = format!("{}.pdf", app.title_stem());
     let opts = wordcraft_engine::cmd::file::export_options(&app.session, &json!({}));
     let bytes = wordcraft_engine::io::save_bytes_with(&name, &app.session.doc, None, &opts)?;
     craft_nora::protocol::pdf_result(&name, &bytes)
+}
+
+/// The document in its own format (the page's file's: `.docx`…), as it is now with what was not saved yet, handed to
+/// Nora for an e-mail draft (craft-nora's `file_result`). A document that has a password goes encrypted with it, as a
+/// save writes it. Nothing is saved.
+fn export_file(app: &mut WordApp) -> Result<Value, String> {
+    let name = app.default_save_name();
+    let opts = wordcraft_engine::cmd::file::export_options(&app.session, &json!({}));
+    let password = app.session.password.as_ref().map(wordcraft_engine::Password::as_str);
+    let bytes = wordcraft_engine::io::save_bytes_with(&name, &app.session.doc, password, &opts)?;
+    craft_nora::protocol::file_result(&name, &bytes)
 }
 
 /// Hands one call to the host. Without a connection the call fails at once, as an unavailable server.
@@ -757,7 +781,7 @@ fn describe(kind: &DocActionKind) -> String {
         DocActionKind::Save => tl!("Save the document").to_string(),
         DocActionKind::Undo => tl!("Undo the last change").to_string(),
         // Never waiting for a yes (the print dialog is the person's; the PDF goes to a draft): craft-nora's words.
-        DocActionKind::Print | DocActionKind::ExportPdf => kind.summary(),
+        DocActionKind::Print | DocActionKind::ExportPdf | DocActionKind::ExportFile => kind.summary(),
     }
 }
 
@@ -996,6 +1020,19 @@ mod tests {
         let size = usize::try_from(answer["size"].as_u64().unwrap_or_default()).unwrap_or_default();
         assert!(size > 0 && data.len() == size.div_ceil(3) * 4, "the size is the PDF's, the data its base64");
         assert_eq!(text_of(&mut a), "Lettre à envoyer", "the document is left as it was");
+    }
+
+    /// « Envoie-le par e-mail »: the document in its own format, as it is now, for the draft the server writes; nothing
+    /// is saved.
+    #[test]
+    fn nora_gets_the_document_in_its_format_for_an_e_mail_draft() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Rapport à envoyer");
+        let answer = run(&mut a, DocActionKind::ExportFile).unwrap();
+        assert_eq!(answer["name"], "Document1.docx");
+        let data = answer["data"].as_str().unwrap_or_default();
+        assert!(data.starts_with("UEsDB"), "a Word package (a zip), in base64");
+        assert_eq!(text_of(&mut a), "Rapport à envoyer", "the document is left as it was");
     }
 
     /// A card's Open goes to the host as a path of the instance; without a host that opens pages the pane offers none.
