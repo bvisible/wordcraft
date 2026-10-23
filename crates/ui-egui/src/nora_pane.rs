@@ -257,7 +257,7 @@ fn run_document(app: &mut WordApp, ctx: &egui::Context, kind: &DocActionKind) ->
                 return Ok(unchanged(value));
             }
             // What the action really wrote: a link or a field that leads outside the document takes it all back.
-            let found = guard::added(&before.written, app.session.doc());
+            let found = guard::added(&before.written, &app.session.doc);
             if !found.is_empty() {
                 before.restore(app);
                 return Err(guard::refusal(&what_ran(kind), &found));
@@ -321,7 +321,7 @@ impl Before {
             snapshot: s.edit_snapshot_whole(),
             view: s.view.clone(),
             pending: s.pending.clone(),
-            written: guard::Before::of(s.doc()),
+            written: guard::Before::of(&s.doc),
         }
     }
 
