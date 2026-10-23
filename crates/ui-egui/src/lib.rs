@@ -188,6 +188,10 @@ pub struct Services {
     pub nora_http: Option<Box<dyn Fn(craft_nora::HttpRequest)>>,
     /// The answers to [`Services::nora_http`], delivered asynchronously by the host.
     pub nora_inbox: Option<NoraInbox>,
+    // //// Neoffice — the file a hosting page named with the document it opened (the Drive's file id), which the Nora
+    // pane tells Nora with each message about that document. Without one (every other build) the pane names no file.
+    /// The hosting page's last file: its name, and its id for it when it named one.
+    pub nora_file: Option<NoraFile>,
     // //// Neoffice — what a hosting page (the Drive of the Suite, Neodesk's window) changes about the editor: a text
     // file the person opened is saved as text rather than turned into a Word document, the links to the upstream
     // project's community (Discord) are not shown, and the page, not the editor, opens documents. All off, as
@@ -253,6 +257,8 @@ pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
 
 // //// Neoffice — answers to the Nora pane's calls, delivered asynchronously by the host like `Inbox`.
 pub type NoraInbox = std::sync::Arc<std::sync::Mutex<Vec<craft_nora::HttpResponse>>>;
+// //// Neoffice — the file the hosting page sent last, and its id for it (`Services::nora_file`).
+pub type NoraFile = std::sync::Arc<std::sync::Mutex<Option<(String, Option<String>)>>>;
 // //// Neoffice — a host that connects the Nora pane makes these calls and delivers these answers.
 pub use craft_nora::{HttpRequest, HttpResponse};
 

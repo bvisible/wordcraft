@@ -30,6 +30,8 @@
 //! goes to the conversation like every other action). A failure of the connection to Nora is said in the
 //! interface language ([`error_words`]).
 
+mod guard;
+
 use craft_nora::{
     AppKind, CommandCall, CommandPolicy, Decision, DocActionKind, DocumentInfo, HttpRequest, HttpResponse, Input, NoraError, NoraSession, Output,
     PageContext, Selection, SessionConfig,
@@ -254,6 +256,12 @@ fn run_document(app: &mut WordApp, ctx: &egui::Context, kind: &DocActionKind) ->
             if steps == 0 && after == before.rev && app.session.document_id() == before.document {
                 return Ok(unchanged(value));
             }
+            // What the action really wrote: a link or a field that leads outside the document takes it all back.
+            let found = guard::added(&before.written, app.session.doc());
+            if !found.is_empty() {
+                before.restore(app);
+                return Err(guard::refusal(&what_ran(kind), &found));
+            }
             app.nora.changes.push(Change { document: before.document, steps, before: before.rev, after });
             Ok(value)
         }
@@ -261,6 +269,16 @@ fn run_document(app: &mut WordApp, ctx: &egui::Context, kind: &DocActionKind) ->
             before.restore(app);
             Err(error)
         }
+    }
+}
+
+/// How Nora is told which of her actions was taken back.
+fn what_ran(kind: &DocActionKind) -> String {
+    match kind {
+        DocActionKind::Execute { command, .. } => format!("`{command}`"),
+        DocActionKind::Batch { .. } => "The batch".to_string(),
+        DocActionKind::TypeText { .. } => "The typed text".to_string(),
+        _ => "The action".to_string(),
     }
 }
 
@@ -289,6 +307,8 @@ struct Before {
     view: ViewState,
     /// The formatting waiting at the caret for the person's next typing (Bold with nothing selected).
     pending: Option<CharProps>,
+    /// The document's stories as they were, for what the action writes ([`guard`]).
+    written: guard::Before,
 }
 
 impl Before {
@@ -301,6 +321,7 @@ impl Before {
             snapshot: s.edit_snapshot_whole(),
             view: s.view.clone(),
             pending: s.pending.clone(),
+            written: guard::Before::of(s.doc()),
         }
     }
 
@@ -621,13 +642,27 @@ fn send(app: &mut WordApp, request: HttpRequest) -> Vec<Output> {
     }
 }
 
+/// The file the hosting page named the open document (`Services::nora_file`): the page's last file, when the
+/// document is that file (its name), and only an id that reads as one ([`DocumentInfo::file_id`]). The server never
+/// believes it as it comes, it reads the file again under the person's rights. A page that names none names none.
+fn named_file(app: &WordApp, name: &str) -> Option<String> {
+    let file = app.services.nora_file.as_ref()?.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let (sent, id) = file?;
+    let sent = std::path::Path::new(&sent).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(sent);
+    if sent != name {
+        return None;
+    }
+    DocumentInfo::file_id(&id?)
+}
+
 /// Where the user is: the editor, the document's name and page count, and the selected text.
 fn context_of(app: &mut WordApp) -> PageContext {
     let name = app.session.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| app.title_stem());
     let pages = u32::try_from(app.session.layout().pages.len()).ok();
     let selected = app.session.selected_text();
     let selection = (!selected.is_empty()).then(|| Selection { text: selected.chars().take(MAX_SELECTION_CHARS).collect() });
-    PageContext::editor(AppKind::Word, DocumentInfo { name, id: None, pages, selection })
+    let id = named_file(app, &name);
+    PageContext::editor(AppKind::Word, DocumentInfo { name, id, pages, selection })
 }
 
 /// The pane's bubbles in WordCraft's own colors, light or dark.
@@ -1742,5 +1777,53 @@ mod tests {
         h.run_steps(4);
         assert!(h.query_by_label("Nora n'a pas pu être jointe. Vérifiez la connexion et réessayez.").is_some());
         assert!(h.query_by_label("No answer from Nora: TypeError: Failed to fetch").is_none());
+    }
+
+    /// The page that hosts the editor names the file the document is: Nora is told its id with each message about it,
+    /// only while the document is that file, and only an id that reads as one.
+    #[test]
+    fn the_context_carries_the_file_the_page_named() {
+        let file: crate::NoraFile = Arc::default();
+        let mut a = app(Services { nora_file: Some(file.clone()), ..Services::default() });
+        assert_eq!(context_of(&mut a).document.id, None, "nothing named, nothing told");
+        let name = context_of(&mut a).document.name;
+        *file.lock().unwrap() = Some((name.clone(), Some("3fcaa7893c".into())));
+        assert_eq!(context_of(&mut a).document.id.as_deref(), Some("3fcaa7893c"));
+        let value: Value = serde_json::from_str(&context_of(&mut a).to_json_string()).unwrap();
+        assert_eq!(value["document"]["id"], "3fcaa7893c", "{value}");
+        *file.lock().unwrap() = Some(("Autre.docx".into(), Some("3fcaa7893c".into())));
+        assert_eq!(context_of(&mut a).document.id, None, "the page's file is another document");
+        *file.lock().unwrap() = Some((name.clone(), Some("../x".into())));
+        assert_eq!(context_of(&mut a).document.id, None, "what is no id");
+        *file.lock().unwrap() = Some((name, None));
+        assert_eq!(context_of(&mut a).document.id, None, "a file the page names not");
+        let mut b = app(Services::default());
+        assert_eq!(context_of(&mut b).document.id, None, "a build with no page names no file");
+    }
+
+    /// A change of Nora's that leaves a link to a file, or a field that reads one, is taken back whole, and her answer
+    /// says why; a link to a web page and the document's own fields stay.
+    #[test]
+    fn a_change_that_leads_outside_the_document_is_taken_back_and_said() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Tarifs ");
+        let kept = text_of(&mut a);
+        let link = |url: &str| DocActionKind::Execute { command: "insert.link".into(), params: json!({"url": url, "text": "catalogue"}) };
+        let error = run(&mut a, link("C:\\Tarifs\\catalogue.pdf")).unwrap_err();
+        assert!(error.starts_with("`insert.link` was undone"), "{error}");
+        assert!(error.contains("a link to C:\\Tarifs\\catalogue.pdf (the document's text)"), "{error}");
+        assert_eq!(text_of(&mut a), kept, "nothing of it is left");
+        for url in ["\\\\srv\\share\\x.docx", "file:///C:/x.pdf", "#[Contrat.docx]Annexe"] {
+            assert!(run(&mut a, link(url)).unwrap_err().contains("was undone"), "{url}");
+        }
+        let field = |instr: &str| DocActionKind::Execute { command: "insert.field".into(), params: json!({"instr": instr, "result": "x"}) };
+        let error = run(&mut a, field("INCLUDETEXT \"C:\\\\x.docx\"")).unwrap_err();
+        assert!(error.contains("a INCLUDETEXT field, which reaches outside the document"), "{error}");
+        assert!(run(&mut a, field("HYPERLINK \"\\\\\\\\srv\\\\x\"")).unwrap_err().contains("a HYPERLINK field to"));
+        assert_eq!(text_of(&mut a), kept);
+        run(&mut a, link("https://example.com")).unwrap();
+        run(&mut a, link("#Annexe")).unwrap();
+        run(&mut a, field("PAGE")).unwrap();
+        assert!(text_of(&mut a).contains("catalogue"), "a web page, a bookmark and a page number stay");
     }
 }

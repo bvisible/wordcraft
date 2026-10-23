@@ -6,8 +6,11 @@
 //! Messages are plain objects with a `type`:
 //!
 //! - `wordcraft:ready` (to the parent): `{ version }`, the app is listening; send the file now.
-//! - `wordcraft:open` (from the parent): `{ name, bytes }`, `bytes` an `ArrayBuffer` or
+//! - `wordcraft:open` (from the parent): `{ name, bytes, id? }`, `bytes` an `ArrayBuffer` or
 //!   `Uint8Array`. It opens like a document picked with File › Open or dropped on the window.
+//!   Neoffice's addition: `id`, the page's own name for the file (the Drive's file id), which Nora's
+//!   pane tells Nora with each message about that document (`Services::nora_file`); a page that sends
+//!   none changes nothing.
 //! - `wordcraft:save` (to the parent): `{ name, bytes }` (a transferred `ArrayBuffer`) for every file
 //!   WordCraft would otherwise download: Save and Save As, and the exports (PDF, plain text…).
 //!   The parent stores it, or offers it, by the file's extension.
@@ -31,7 +34,7 @@ use std::rc::Rc;
 use wasm_bindgen::{JsCast as _, JsValue, closure::Closure};
 use wordcraft_ui_egui::async_saves::AsyncSaves;
 use wordcraft_ui_egui::host_saves::HostSaves;
-use wordcraft_ui_egui::{Inbox, Services};
+use wordcraft_ui_egui::{Inbox, NoraFile, Services};
 
 /// The longest user name taken from `?author=`.
 const MAX_AUTHOR_CHARS: usize = 200;
@@ -74,7 +77,10 @@ impl Bridge {
         // (`Services::host_owns_documents`).
         services.host_owns_documents = true;
         let host_saves = HostSaves::new(saves);
-        self.listen(inbox, host_saves.clone(), ctx);
+        // The page's name for each file it sends, which Nora's pane reads (`nora_pane::named_file`).
+        let file = NoraFile::default();
+        services.nora_file = Some(file.clone());
+        self.listen(inbox, file, host_saves.clone(), ctx);
         let bridge = self.clone();
         let handed = host_saves.clone();
         services.download = Some(Box::new(move |path: &str, bytes: &[u8]| {
@@ -124,7 +130,7 @@ impl Bridge {
         Ok(name)
     }
 
-    fn listen(&self, inbox: Inbox, saves: HostSaves, ctx: egui::Context) {
+    fn listen(&self, inbox: Inbox, file: NoraFile, saves: HostSaves, ctx: egui::Context) {
         let parent = self.parent.clone();
         let origin = self.origin.clone();
         let on_message = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
@@ -136,6 +142,7 @@ impl Bridge {
                 Some("wordcraft:open") => {
                     let name = string(&data, "name").filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "document.docx".to_string());
                     let Some(bytes) = bytes(&data) else { return };
+                    *file.lock().unwrap_or_else(|e| e.into_inner()) = Some((name.clone(), string(&data, "id")));
                     inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, bytes));
                 }
                 Some("wordcraft:saved") => {
