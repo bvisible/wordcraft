@@ -1826,4 +1826,15 @@ mod tests {
         run(&mut a, field("PAGE")).unwrap();
         assert!(text_of(&mut a).contains("catalogue"), "a web page, a bookmark and a page number stay");
     }
+
+    /// The person's own link to a file stays theirs: Nora making a word of it bold splits its run in two, and that is
+    /// still the one link, not a new one.
+    #[test]
+    fn formatting_a_word_of_the_person_s_link_to_a_file_is_not_refused() {
+        let mut a = app(Services::default());
+        a.execute("insert.link", json!({"url": "\\\\srv\\cat.pdf", "text": "le catalogue"})).unwrap();
+        run(&mut a, DocActionKind::SelectText { text: "catalogue".into(), occurrence: 1 }).unwrap();
+        run(&mut a, DocActionKind::Execute { command: "format.bold".into(), params: json!({}) }).unwrap();
+        assert_eq!(text_of(&mut a), "le catalogue");
+    }
 }

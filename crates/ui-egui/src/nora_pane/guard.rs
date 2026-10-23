@@ -13,7 +13,9 @@
 //!
 //! - a link (`CharProps::link`) that is no web page or e-mail address ([`craft_nora::links::web_or_mail`])
 //!   nor a bookmark of this document (`#name`, without another file's `[`, `]`, `\` or `/`);
-//! - a field that reads a file, starts a program or runs a macro when Word updates it ([`OUTSIDE_FIELDS`]),
+//! - a field that reads a file, starts a program, inserts from a template or runs a macro when Word updates
+//!   it ([`OUTSIDE_FIELDS`]; a deny list, so that the fields WordCraft's own commands make, citations,
+//!   form fields and merge fields among them, stay Nora's to make),
 //!   or a `HYPERLINK` field whose target is no such place, read as Word reads its code;
 //! - an embedded object (a chart, a diagram) that reads another file or an address, or whose link goes
 //!   elsewhere than a web page or an e-mail address.
@@ -29,11 +31,28 @@ use serde_json::{Map, Value};
 use wordcraft_doc::{Block, Document, Part};
 
 /// The fields Word runs against something outside the document: they read a file (`INCLUDETEXT`,
-/// `INCLUDEPICTURE`, `INCLUDE`, `IMPORT`, `RD`, `LINK`), talk to another program (`DDE`, `DDEAUTO`, `LINK`,
-/// `EMBED`), query a database (`DATABASE`), run a macro (`MACROBUTTON`) or send codes to the printer
-/// (`PRINT`).
-const OUTSIDE_FIELDS: &[&str] =
-    &["INCLUDETEXT", "INCLUDEPICTURE", "INCLUDE", "IMPORT", "RD", "LINK", "DDE", "DDEAUTO", "EMBED", "DATABASE", "MACROBUTTON", "PRINT"];
+/// `INCLUDEPICTURE`, `INCLUDE`, `IMPORT`, `RD`, `LINK`, `DATA`), insert from the attached template, which
+/// may be a file of the network (`AUTOTEXT`, `AUTOTEXTLIST`, `GLOSSARY`), talk to another program (`DDE`,
+/// `DDEAUTO`, `LINK`, `EMBED`), query a database (`DATABASE`), run a macro (`MACROBUTTON`) or send codes to
+/// the printer (`PRINT`).
+const OUTSIDE_FIELDS: &[&str] = &[
+    "INCLUDETEXT",
+    "INCLUDEPICTURE",
+    "INCLUDE",
+    "IMPORT",
+    "RD",
+    "LINK",
+    "DATA",
+    "AUTOTEXT",
+    "AUTOTEXTLIST",
+    "GLOSSARY",
+    "DDE",
+    "DDEAUTO",
+    "EMBED",
+    "DATABASE",
+    "MACROBUTTON",
+    "PRINT",
+];
 
 /// What a bookmark of this document cannot hold and a place in another file does.
 const ANOTHER_FILE: &[char] = &['[', ']', '\\', '/'];
@@ -143,11 +162,16 @@ fn all(body: &[Arc<Block>], parts: &BTreeMap<u32, Part>) -> Vec<Reach> {
 /// (serde): a link is a `link` text of the run's properties, a field's code an `instr` text, an embedded
 /// object's relationship an object with `external: true` and its `target`. A story that cannot be read so is
 /// counted as one reach of its own kind, the same before and after.
+/// Each target counts once per block or part: a link is on every run of its text, and a run split in two (a
+/// word of the person's linked text made bold) is still the one link.
 fn read<T: serde::Serialize>(story: &T, place: &str, found: &mut Vec<Reach>) {
+    let mut here = Vec::new();
     match serde_json::to_value(story) {
-        Ok(value) => walk(&value, place, found, 0),
-        Err(_) => found.push(Reach { key: "unreadable".to_string(), what: "a story that could not be read".to_string(), place: place.to_string() }),
+        Ok(value) => walk(&value, place, &mut here, 0),
+        Err(_) => here.push(Reach { key: "unreadable".to_string(), what: "a story that could not be read".to_string(), place: place.to_string() }),
     }
+    let mut seen = HashSet::new();
+    found.extend(here.into_iter().filter(|reach| seen.insert(reach.key.clone())));
 }
 
 fn walk(value: &Value, place: &str, found: &mut Vec<Reach>, depth: usize) {
@@ -334,6 +358,7 @@ mod tests {
             ("includepicture \"https://example.com/pixel.png\"", "a INCLUDEPICTURE field"),
             ("DDEAUTO c:\\\\windows\\\\system32\\\\cmd.exe \"/k calc\"", "a DDEAUTO field"),
             ("MACROBUTTON Run Click", "a MACROBUTTON field"),
+            ("AUTOTEXT Signature", "a AUTOTEXT field"),
             ("HYPERLINK \"C:\\\\Tarifs\\\\x.pdf\"", "a HYPERLINK field to C:\\\\Tarifs\\\\x.pdf"),
             ("HYPERLINK \\o \"tip\" \\\\srv\\x", "a HYPERLINK field to \\\\srv\\x"),
             ("HYPERLINK \"https://example.com\" \"C:\\\\x\"", "a HYPERLINK field to C:\\\\x"),
