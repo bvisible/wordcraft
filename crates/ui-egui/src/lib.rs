@@ -192,6 +192,11 @@ pub struct Services {
     // pane tells Nora with each message about that document. Without one (every other build) the pane names no file.
     /// The hosting page's last file: its name, and its id for it when it named one.
     pub nora_file: Option<NoraFile>,
+    // //// Neoffice — the host opens a page of the person's instance for the pane (a card's Open, a link of a reply):
+    // the path only (`/drive/f/…`), already checked by craft-nora (`instance_path`); the host knows the instance. Without
+    // it the pane shows a link as its words.
+    /// Open a page of the person's instance, by its path, the host's own way.
+    pub nora_open: Option<Box<dyn Fn(&str)>>,
     // //// Neoffice — what a hosting page (the Drive of the Suite, Neodesk's window) changes about the editor: a text
     // file the person opened is saved as text rather than turned into a Word document, the links to the upstream
     // project's community (Discord) are not shown, and the page, not the editor, opens documents. All off, as

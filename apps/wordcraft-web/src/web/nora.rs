@@ -22,7 +22,9 @@
 //! A host that makes the calls itself offers `window.wordcraftNoraCall(path, body)`, on the page or on the page of the
 //! same origin that frames it, a promise of `{ status, body }` (`body` is the JSON of the call): the pane is then on
 //! without `?nora`, and every call goes through it. Neodesk does so: it calls with the person's credential, which
-//! neither its page nor the editor ever holds (the same as NeoMail's `mailcraftNoraCall`).
+//! neither its page nor the editor ever holds (the same as NeoMail's `mailcraftNoraCall`). The host may offer
+//! `window.wordcraftNoraOpen(path)` too: it opens the pages of the person's instance the pane leads to (a card's Open, a
+//! link of a reply), by their path; without it the pane shows a link as its words.
 
 use std::sync::{Arc, Mutex};
 
@@ -51,6 +53,12 @@ pub fn offered() -> bool {
 
 /// The host's own way to Nora, when it offers one: the window that offers it, and the function.
 fn host_call() -> Option<(JsValue, js_sys::Function)> {
+    host_function("wordcraftNoraCall")
+}
+
+/// A function the page, or the page of the same origin that frames it, offers the editor under `name`: the window
+/// that offers it, and the function.
+fn host_function(name: &str) -> Option<(JsValue, js_sys::Function)> {
     let window = web_sys::window()?;
     let own = JsValue::from(window.clone());
     let mut windows = vec![own.clone()];
@@ -61,7 +69,7 @@ fn host_call() -> Option<(JsValue, js_sys::Function)> {
             windows.push(parent);
         }
     }
-    windows.into_iter().find_map(|w| get(&w, "wordcraftNoraCall").filter(JsValue::is_function).map(|f| (w, js_sys::Function::from(f))))
+    windows.into_iter().find_map(|w| get(&w, name).filter(JsValue::is_function).map(|f| (w, js_sys::Function::from(f))))
 }
 
 /// One call made by the host: its answer read as a `fetch`'s (status 0 when it gave none).
@@ -77,6 +85,16 @@ async fn call_host(owner: &JsValue, function: &js_sys::Function, request: &HttpR
 /// Gives the app the means to reach Nora: each call is a `fetch`, each answer is delivered to the pane
 /// and wakes the interface.
 pub fn connect(services: &mut Services, origin: String, ctx: egui::Context) {
+    // //// Neoffice — the page that knows the instance opens its pages for the pane (`wordcraftNoraOpen(path)`: the Drive
+    // opens them in a new tab, on the person's click). The pane gives it a path craft-nora checked; without the function
+    // the pane shows a link as its words.
+    if let Some((owner, open)) = host_function("wordcraftNoraOpen") {
+        services.nora_open = Some(Box::new(move |path: &str| {
+            if let Err(error) = open.call1(&owner, &JsValue::from_str(path)) {
+                log::warn!("the page did not open {path}: {}", reason(error));
+            }
+        }));
+    }
     let inbox: NoraInbox = Arc::new(Mutex::new(Vec::new()));
     services.nora_inbox = Some(inbox.clone());
     services.nora_http = Some(Box::new(move |request: HttpRequest| {

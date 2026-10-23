@@ -29,6 +29,12 @@
 //! While Nora works, the panel's Send button is a Stop button (craft-nora-ui's `PanelAction::Stop`, which
 //! goes to the conversation like every other action). A failure of the connection to Nora is said in the
 //! interface language ([`error_words`]).
+//!
+//! The cards of the conversation (a letter made, an e-mail draft, a letter to confirm as the company's template)
+//! and the links of Nora's replies are shown by the panel; a page of the instance they lead to is opened by the host
+//! ([`crate::Services::nora_open`]). Nora may print the document (`doc_print`: the print dialog opens, the person
+//! confirms there) and ask for its PDF (`doc_export_pdf`: the PDF goes to an e-mail draft in the person's mailbox,
+//! nothing is sent), as the person asked her in the pane.
 
 mod guard;
 
@@ -190,6 +196,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     app.nora.panel.labels = labels();
     app.nora.panel.style = style(ui);
     app.nora.panel.offline = app.services.nora_http.is_none().then(|| tl!("Nora isn't available in this version yet").to_string());
+    app.nora.panel.open_links = app.services.nora_open.is_some();
     for action in app.nora.panel.show(ui, &app.nora.session) {
         if matches!(action, PanelAction::Send(_)) {
             // Where the user is, as of the message: told to Nora with it, never read on every frame.
@@ -226,6 +233,11 @@ fn perform(app: &mut WordApp, outputs: Vec<Output>, ctx: &egui::Context) {
                     next.extend(app.nora.session.handle(Input::DocumentResult { id: call.id, result }));
                 }
                 Output::Changed => ctx.request_repaint(),
+                Output::Open(path) => {
+                    if let Some(open) = &app.services.nora_open {
+                        open(&path);
+                    }
+                }
             }
         }
         queue = next;
@@ -357,6 +369,8 @@ fn apply(app: &mut WordApp, ctx: &egui::Context, kind: &DocActionKind) -> Result
         DocActionKind::RenderPage { page, scale } => render_page(app, ctx, *page, *scale),
         DocActionKind::Save => app.execute("file.save", json!({})),
         DocActionKind::Undo => undo(app),
+        DocActionKind::Print => print(app),
+        DocActionKind::ExportPdf => export_pdf(app),
     }
 }
 
@@ -631,6 +645,22 @@ fn undo(app: &mut WordApp) -> Result<Value, String> {
     Ok(json!({"undone": change.steps}))
 }
 
+/// The print dialog on the document, as File › Print makes it (`printing::submit`): the person chooses and confirms
+/// there, nothing is printed before.
+fn print(app: &mut WordApp) -> Result<Value, String> {
+    crate::printing::submit(app, &json!({}))?;
+    Ok(json!({"dialog": true, "changed": false}))
+}
+
+/// The document's PDF, as File › Export › PDF makes it, handed to Nora for an e-mail draft (craft-nora's
+/// `pdf_result`: in base64, refused past its size).
+fn export_pdf(app: &mut WordApp) -> Result<Value, String> {
+    let name = format!("{}.pdf", app.title_stem());
+    let opts = wordcraft_engine::cmd::file::export_options(&app.session, &json!({}));
+    let bytes = wordcraft_engine::io::save_bytes_with(&name, &app.session.doc, None, &opts)?;
+    craft_nora::protocol::pdf_result(&name, &bytes)
+}
+
 /// Hands one call to the host. Without a connection the call fails at once, as an unavailable server.
 fn send(app: &mut WordApp, request: HttpRequest) -> Vec<Output> {
     match &app.services.nora_http {
@@ -688,6 +718,7 @@ fn labels() -> NoraLabels {
         confirm_heading: tl!("Nora wants to:").to_string(),
         allow: tl!("Allow").to_string(),
         refuse: tl!("Refuse").to_string(),
+        open: tl!("Open").to_string(),
         describe,
     }
 }
@@ -720,6 +751,8 @@ fn describe(kind: &DocActionKind) -> String {
         DocActionKind::RenderPage { page, .. } => fmt(tl!("Look at page {page}"), &[("page", &page.to_string())]),
         DocActionKind::Save => tl!("Save the document").to_string(),
         DocActionKind::Undo => tl!("Undo the last change").to_string(),
+        // Never waiting for a yes (the print dialog is the person's; the PDF goes to a draft): craft-nora's words.
+        DocActionKind::Print | DocActionKind::ExportPdf => kind.summary(),
     }
 }
 
@@ -918,6 +951,62 @@ mod tests {
         let observation = told.iter().find(|r| r.path.ends_with("receive_observation")).expect("Nora gets an answer");
         assert_eq!(observation.body["callback_id"], "c1");
         assert_eq!(observation.body["observation"]["ok"], true);
+    }
+
+    // //// Neoffice — print, the PDF for an e-mail draft, and the pages a card opens (step 7 of « Nora partout »).
+
+    /// « Imprime-la »: the print dialog of the host opens on the document's PDF, as File › Print makes it.
+    #[test]
+    fn nora_prints_through_the_print_dialog_only() {
+        let printed: Arc<Mutex<Vec<Vec<u8>>>> = Arc::default();
+        let seen = printed.clone();
+        let services = Services {
+            print: Some(Box::new(move |bytes: &[u8]| {
+                seen.lock().unwrap_or_else(|e| e.into_inner()).push(bytes.to_vec());
+                Ok(())
+            })),
+            ..Services::default()
+        };
+        let mut a = app(services);
+        type_in(&mut a, "Lettre à imprimer");
+        let answer = run(&mut a, DocActionKind::Print).unwrap();
+        assert_eq!(answer, json!({"dialog": true, "changed": false}));
+        let printed = printed.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(printed.len(), 1);
+        assert!(printed[0].starts_with(b"%PDF-"), "the dialog gets the document's PDF");
+        // Without a print dialog, Nora is told so: nothing is printed another way.
+        let mut b = app(Services::default());
+        assert!(run(&mut b, DocActionKind::Print).is_err());
+    }
+
+    /// « Envoie-la par e-mail »: the document's PDF, in base64, for the draft the server writes.
+    #[test]
+    fn nora_gets_the_document_s_pdf_for_an_e_mail_draft() {
+        let mut a = app(Services::default());
+        type_in(&mut a, "Lettre à envoyer");
+        let answer = run(&mut a, DocActionKind::ExportPdf).unwrap();
+        assert_eq!(answer["name"], "Document1.pdf");
+        let data = answer["data"].as_str().unwrap_or_default();
+        assert!(data.starts_with("JVBERi0"), "a PDF, in base64");
+        let size = usize::try_from(answer["size"].as_u64().unwrap_or_default()).unwrap_or_default();
+        assert!(size > 0 && data.len() == size.div_ceil(3) * 4, "the size is the PDF's, the data its base64");
+        assert_eq!(text_of(&mut a), "Lettre à envoyer", "the document is left as it was");
+    }
+
+    /// A card's Open goes to the host as a path of the instance; without a host that opens pages the pane offers none.
+    #[test]
+    fn a_page_of_the_instance_is_opened_by_the_host() {
+        let opened: Arc<Mutex<Vec<String>>> = Arc::default();
+        let seen = opened.clone();
+        let (mut services, _outbox, _inbox) = connected();
+        services.nora_open = Some(Box::new(move |path: &str| seen.lock().unwrap_or_else(|e| e.into_inner()).push(path.to_string())));
+        let mut a = app(services);
+        let outputs = a.nora.session.handle(Input::OpenLink("/drive/f/abc".into()));
+        let ctx = egui::Context::default();
+        perform(&mut a, outputs, &ctx);
+        let outputs = a.nora.session.handle(Input::OpenLink("https://elsewhere.example/x".into()));
+        perform(&mut a, outputs, &ctx);
+        assert_eq!(*opened.lock().unwrap_or_else(|e| e.into_inner()), vec!["/drive/f/abc".to_string()]);
     }
 
     /// A command the policy refuses never reaches the document, and Nora is told why.
