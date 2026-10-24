@@ -102,8 +102,10 @@ arboard = { version = "3.6", default-features = false, features = ["wayland-data
 # (a tab in the background); the panel builds on egui 0.36 or 0.37 (the editors keep 0.36, the one their lock has).
 # //// Neoffice — 1f01bcc (24.10.2026): a request lost to a tab in the background is offered again (Resume, on the click
 # only), an action of a turn given up on never plays later, the links of a long reply are read in linear time.
-craft-nora = { git = "https://github.com/bvisible/craft-libs", rev = "1f01bcc9d5f868014499b4e6b4e617bd9e228c06" }
-craft-nora-ui = { git = "https://github.com/bvisible/craft-libs", rev = "1f01bcc9d5f868014499b4e6b4e617bd9e228c06" }
+# //// Neoffice — 620d408 (24.10.2026): an action addressed to another conversation or document is refused, a reply of a
+# turn that could not act in time is corrected (CorrectionWords), a card after the final reply is still read.
+craft-nora = { git = "https://github.com/bvisible/craft-libs", rev = "620d40879c708193063fd53a7f86415c44339ce0" }
+craft-nora-ui = { git = "https://github.com/bvisible/craft-libs", rev = "620d40879c708193063fd53a7f86415c44339ce0" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

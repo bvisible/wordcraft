@@ -61,6 +61,8 @@ pub const FRENCH: &[(&str, &str)] = &[
     ("Nora's answer could not be read.", "La réponse de Nora n'a pas pu être lue."),
     (RESUME.0, "Cet onglet était en arrière-plan : Nora n'a pas pu agir dans le document."),
     (RESUME.1, "Reprendre"),
+    (CORRECTION.0, "Rien n'a été fait dans le document : Nora n'a pas pu y agir à temps. Redemandez si vous en avez encore besoin."),
+    (CORRECTION.1, "Tout n'a pas été fait : une partie n'a pas pu s'exécuter dans le document à temps."),
 ];
 
 /// The strings the interface looks up whatever the Nora pane does (its ribbon group and its switch in
@@ -112,6 +114,135 @@ const RESUME_WORDS: &[(&str, &str, &str)] = &[
     ("zh-hant", "此分頁位於背景：Nora 無法在文件中執行操作。", "恢復"),
 ];
 
+/// What the pane says of a reply whose turn could not act in the document in time (craft-libs `CorrectionWords`): nothing
+/// was done, part was not done.
+const CORRECTION: (&str, &str) = (
+    "Nothing was done in the document: Nora could not act in it in time. Ask again if you still need it.",
+    "Not all of this was done: part of it could not run in the document in time.",
+);
+
+/// [`CORRECTION`] in every other language of the interface (translated by Haiku, 24.10.2026): the code, then the two
+/// sentences. French is in [`FRENCH`].
+const CORRECTION_WORDS: &[(&str, &str, &str)] = &[
+    (
+        "de",
+        "Im Dokument wurde nichts geändert: Nora konnte darin nicht rechtzeitig etwas tun. Fragen Sie erneut, falls Sie es noch brauchen.",
+        "Nicht alles wurde ausgeführt: Ein Teil konnte rechtzeitig nicht im Dokument ausgeführt werden.",
+    ),
+    (
+        "it",
+        "Nel documento non è stato fatto nulla: Nora non ha potuto agire in tempo. Richieda di nuovo se ne ha ancora bisogno.",
+        "Non tutto è stato fatto: una parte non ha potuto essere eseguita nel documento in tempo.",
+    ),
+    (
+        "es",
+        "No se hizo nada en el documento: Nora no pudo actuar en él a tiempo. Vuelva a pedirlo si todavía lo necesita.",
+        "No se hizo todo: una parte no pudo ejecutarse en el documento a tiempo.",
+    ),
+    (
+        "pt-br",
+        "Nada foi feito no documento: Nora não conseguiu agir nele a tempo. Peça novamente se ainda precisar.",
+        "Nem tudo foi feito: parte não pôde ser executada no documento a tempo.",
+    ),
+    (
+        "nl",
+        "Er is niets in het document gedaan: Nora kon er niet op tijd in handelen. Vraag het opnieuw als u het nog nodig hebt.",
+        "Niet alles is gedaan: een deel kon niet op tijd in het document worden uitgevoerd.",
+    ),
+    (
+        "da",
+        "Der blev ikke gjort noget i dokumentet: Nora kunne ikke nå at handle i det. Spørg igen, hvis du stadig har brug for det.",
+        "Ikke alt blev gjort: en del af det kunne ikke køres i dokumentet i tide.",
+    ),
+    (
+        "sv",
+        "Ingenting gjordes i dokumentet: Nora kunde inte agera i det i tid. Fråga igen om du fortfarande behöver det.",
+        "Inte allt gjordes: en del kunde inte köras i dokumentet i tid.",
+    ),
+    (
+        "pl",
+        "Nic nie zostało zrobione w dokumencie: Nora nie mogła w nim zadziałać na czas. Ponów prośbę, jeśli nadal jest potrzebna.",
+        "Nie wszystko zostało zrobione: część nie mogła zostać wykonana w dokumencie na czas.",
+    ),
+    (
+        "cs",
+        "V dokumentu nebylo nic provedeno: Nora v něm nemohla včas zasáhnout. Pokud to ještě potřebujete, zadejte žádost znovu.",
+        "Ne všechno bylo provedeno: část se v dokumentu nepodařilo spustit včas.",
+    ),
+    (
+        "sl",
+        "V dokumentu nič ni bilo narejeno: Nora ni mogla pravočasno ukrepati. Če še potrebujete, zahtevo ponovite.",
+        "Vse ni bilo narejeno: del ni mogel biti pravočasno izveden v dokumentu.",
+    ),
+    (
+        "hr",
+        "U dokumentu nije ništa učinjeno: Nora u njemu nije mogla pravodobno djelovati. Ako i dalje trebate, zatražite ponovno.",
+        "Nije sve učinjeno: dio nije mogao biti pravodobno izvršen u dokumentu.",
+    ),
+    (
+        "sr",
+        "У документу ништа није урађено: Нора у њему није могла да делује на време. Поново затражите ако и даље треба.",
+        "Није све урађено: део није могао да се изврши у документу на време.",
+    ),
+    (
+        "sr-latn",
+        "U dokumentu ništa nije urađeno: Nora u njemu nije mogla da deluje na vreme. Ponovo zatražite ako i dalje treba.",
+        "Nije sve urađeno: deo nije mogao da se izvrši u dokumentu na vreme.",
+    ),
+    (
+        "bg",
+        "В документа нищо не беше направено: Нора не можа да действа в него навреме. Заявете отново, ако още ви е нужно.",
+        "Не всичко беше направено: част от него не можа да се изпълни в документа навреме.",
+    ),
+    (
+        "ru",
+        "В документе ничего не сделано: Нора не успела внести изменения вовремя. Повторите запрос, если он всё ещё нужен.",
+        "Сделано не всё: часть не удалось выполнить в документе вовремя.",
+    ),
+    (
+        "uk",
+        "У документі нічого не зроблено: Нора не встигла внести зміни вчасно. Повторіть запит, якщо він досі потрібен.",
+        "Зроблено не все: частину не вдалося виконати в документі вчасно.",
+    ),
+    (
+        "et",
+        "Dokumendis ei tehtud midagi: Nora ei saanud seal õigel ajal tegutseda. Kui seda veel vajate, küsige uuesti.",
+        "Kõike ei tehtud: osa ei saanud dokumendis õigeks ajaks käivituda.",
+    ),
+    (
+        "hu",
+        "A dokumentumban semmi sem történt: Nora nem tudott időben beavatkozni. Ha még szükség van rá, kérje újra.",
+        "Nem minden történt meg: egy részét nem tudták időben lefuttatni a dokumentumban.",
+    ),
+    (
+        "ro",
+        "Nu s-a făcut nimic în document: Nora nu a putut acționa la timp. Reluați cererea dacă mai aveți nevoie.",
+        "Nu totul a fost făcut: o parte nu a putut fi executată în document la timp.",
+    ),
+    (
+        "tr",
+        "Belgede hiçbir şey yapılmadı: Nora zamanında belgede işlem yapamadı. Hâlâ gerekiyorsa lütfen yeniden isteyin.",
+        "Bunların tamamı yapılmadı: bir kısmı belgede zamanında çalıştırılamadı.",
+    ),
+    (
+        "vi",
+        "Không có gì được thực hiện trong tài liệu: Nora không thể thao tác kịp thời. Nếu vẫn cần, vui lòng yêu cầu lại.",
+        "Không phải tất cả đều đã được thực hiện: một phần không thể chạy trong tài liệu kịp thời.",
+    ),
+    (
+        "ja",
+        "ドキュメントには何も反映されていません: Nora が時間内に操作できませんでした。必要な場合は、もう一度お試しください。",
+        "すべてが完了したわけではありません: 一部は時間内にドキュメントで実行できませんでした。",
+    ),
+    (
+        "ko",
+        "문서에 아무 작업도 반영되지 않았습니다: Nora가 제시간에 문서에서 실행하지 못했습니다. 여전히 필요하면 다시 요청해 주세요.",
+        "모든 작업이 완료된 것은 아닙니다: 일부는 제시간에 문서에서 실행되지 못했습니다.",
+    ),
+    ("zh-hans", "文档中未执行任何操作：Nora 未能及时在文档中操作。如仍需要，请重新提出请求。", "并非全部完成：部分操作未能及时在文档中执行。"),
+    ("zh-hant", "文件中未執行任何操作：Nora 未能及時在文件中操作。如仍需要，請重新提出請求。", "並非全部完成：部分操作未能及時在文件中執行。"),
+];
+
 /// `s` in `lang`, when Neoffice has translated it.
 pub fn plain(lang: Lang, s: &str) -> Option<&'static str> {
     let code = lang.code();
@@ -123,16 +254,19 @@ pub fn plain(lang: Lang, s: &str) -> Option<&'static str> {
         .find(|(language, _)| *language == code)
         .and_then(|(_, table)| table.iter().find(|(english, _)| *english == s))
         .map(|(_, translated)| *translated);
-    complete.or_else(|| {
-        let words = RESUME_WORDS.iter().find(|(language, _, _)| *language == code)?;
-        if s == RESUME.0 {
-            Some(words.1)
-        } else if s == RESUME.1 {
-            Some(words.2)
-        } else {
-            None
-        }
-    })
+    complete.or_else(|| pair(RESUME_WORDS, RESUME, code, s)).or_else(|| pair(CORRECTION_WORDS, CORRECTION, code, s))
+}
+
+/// The translation of one of `english`'s two strings in `table`, for the language `code`.
+fn pair(table: &[(&str, &'static str, &'static str)], english: (&str, &str), code: &str, s: &str) -> Option<&'static str> {
+    let words = table.iter().find(|(language, _, _)| *language == code)?;
+    if s == english.0 {
+        Some(words.1)
+    } else if s == english.1 {
+        Some(words.2)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -183,6 +317,18 @@ mod tests {
         }
         assert_eq!(plain(crate::i18n::Lang::EN, RESUME.1), None, "English is the source");
         assert_eq!(RESUME_WORDS.len() + 2, crate::i18n::Lang::all().count(), "every language but English and French");
+    }
+
+    #[test]
+    fn the_words_of_a_reply_that_could_not_act_in_time_are_in_every_language() {
+        for lang in crate::i18n::Lang::all().filter(|l| l.code() != "en") {
+            for english in [CORRECTION.0, CORRECTION.1] {
+                let said = plain(lang, english).unwrap_or_else(|| panic!("{}: no translation of {english:?}", lang.code()));
+                assert!(!said.is_empty() && said.trim() == said && said != english, "{}: {said:?}", lang.code());
+            }
+            assert!(plain(lang, CORRECTION.0).is_some_and(|said| said.contains("Nora") || said.contains("Нора")), "{}", lang.code());
+        }
+        assert_eq!(CORRECTION_WORDS.len() + 2, crate::i18n::Lang::all().count(), "every language but English and French");
     }
 
     #[test]

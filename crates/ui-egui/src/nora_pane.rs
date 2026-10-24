@@ -42,7 +42,7 @@ use craft_nora::{
     AppKind, CommandCall, CommandPolicy, Decision, DocActionKind, DocumentInfo, HttpRequest, HttpResponse, Input, NoraError, NoraSession, Output,
     PageContext, Selection, SessionConfig,
 };
-use craft_nora_ui::{NoraLabels, NoraPanel, NoraStyle, PanelAction, ResumeWords, drive};
+use craft_nora_ui::{CorrectionWords, NoraLabels, NoraPanel, NoraStyle, PanelAction, ResumeWords, drive};
 use egui::Ui;
 use serde_json::{Value, json};
 use wordcraft_doc::props::CharProps;
@@ -198,6 +198,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     outputs.extend(deliver_answers(app));
     app.nora.panel.labels = labels();
     app.nora.panel.resume_words = resume_words();
+    app.nora.panel.correction_words = correction_words();
     app.nora.panel.style = style(ui);
     app.nora.panel.offline = app.services.nora_http.is_none().then(|| tl!("Nora isn't available in this version yet").to_string());
     app.nora.panel.open_links = app.services.nora_open.is_some();
@@ -767,6 +768,14 @@ fn labels() -> NoraLabels {
 /// What the pane says under a request lost to a tab in the background, and its button, in the interface language.
 fn resume_words() -> ResumeWords {
     ResumeWords { said: tl!("This tab was in the background: Nora could not act in the document.").to_string(), resume: tl!("Resume").to_string() }
+}
+
+/// What the pane says of a reply whose turn could not act in the document in time, in the interface language.
+fn correction_words() -> CorrectionWords {
+    CorrectionWords {
+        nothing_done: tl!("Nothing was done in the document: Nora could not act in it in time. Ask again if you still need it.").to_string(),
+        partly_done: tl!("Not all of this was done: part of it could not run in the document in time.").to_string(),
+    }
 }
 
 /// A failure of the connection to Nora in the interface language (the panel shows the editor's own
