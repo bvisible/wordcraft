@@ -42,7 +42,7 @@ use craft_nora::{
     AppKind, CommandCall, CommandPolicy, Decision, DocActionKind, DocumentInfo, HttpRequest, HttpResponse, Input, NoraError, NoraSession, Output,
     PageContext, Selection, SessionConfig,
 };
-use craft_nora_ui::{NoraLabels, NoraPanel, NoraStyle, PanelAction, drive};
+use craft_nora_ui::{NoraLabels, NoraPanel, NoraStyle, PanelAction, ResumeWords, drive};
 use egui::Ui;
 use serde_json::{Value, json};
 use wordcraft_doc::props::CharProps;
@@ -191,9 +191,13 @@ impl Default for NoraState {
 
 /// Draws the pane's content (inside the pane's frame) and moves the conversation along.
 pub fn show(app: &mut WordApp, ui: &mut Ui) {
-    let mut outputs = deliver_answers(app);
-    outputs.extend(drive(ui.ctx(), &mut app.nora.session));
+    // The frame's tick first, then the answers (craft-libs ed1cb40): after a gap without frames (a tab in the
+    // background) the session knows it before it reads an answer that waited in the page, whose action it then refuses
+    // rather than plays late; from 1f01bcc on, the tick back gives nothing up on the clock before those answers.
+    let mut outputs = drive(ui.ctx(), &mut app.nora.session);
+    outputs.extend(deliver_answers(app));
     app.nora.panel.labels = labels();
+    app.nora.panel.resume_words = resume_words();
     app.nora.panel.style = style(ui);
     app.nora.panel.offline = app.services.nora_http.is_none().then(|| tl!("Nora isn't available in this version yet").to_string());
     app.nora.panel.open_links = app.services.nora_open.is_some();
@@ -760,6 +764,11 @@ fn labels() -> NoraLabels {
     }
 }
 
+/// What the pane says under a request lost to a tab in the background, and its button, in the interface language.
+fn resume_words() -> ResumeWords {
+    ResumeWords { said: tl!("This tab was in the background: Nora could not act in the document.").to_string(), resume: tl!("Resume").to_string() }
+}
+
 /// A failure of the connection to Nora in the interface language (the panel shows the editor's own
 /// sentences, an action it refused, as they come). The server's own words, when it gave some, are shown as
 /// they are: the server writes them for the person.
@@ -988,6 +997,60 @@ mod tests {
         let observation = told.iter().find(|r| r.path.ends_with("receive_observation")).expect("Nora gets an answer");
         assert_eq!(observation.body["callback_id"], "c1");
         assert_eq!(observation.body["observation"]["ok"], true);
+    }
+
+    /// A tab left right after a send draws no frame for minutes: back, the host ticks before it hands over the answers
+    /// that waited in the page, and nothing is given up on the clock at the tick back (craft-libs 1f01bcc); what Nora
+    /// queued while the page ran nothing is refused, never played late, and the pane offers the request again, sent on
+    /// the click only.
+    #[test]
+    fn back_from_a_tab_in_the_background_nothing_is_given_up_and_the_request_can_be_resumed() {
+        let (services, outbox, inbox) = connected();
+        let mut a = app(services);
+        a.run("ui.nora", json!({"value": true})).unwrap();
+        let mut h = harness(a);
+        h.input_mut().time = Some(1.0);
+        h.state_mut().nora.panel.set_draft("Write a greeting");
+        h.run_steps(2);
+        h.get_by_label("Send").click();
+        h.run_steps(2);
+        let first = take(&outbox);
+        let start = first.iter().find(|r| r.path.ends_with("start_or_resume_thread")).expect("the message leaves").clone();
+        // The tab is left at once: eight minutes without a frame, the send's answer waiting in the page.
+        answer(&inbox, &start, json!({"thread_id": "t1", "sent_at": 1000.0}));
+        h.input_mut().time = Some(481.0);
+        h.run_steps(2);
+        assert!(h.state().nora.session.failure().is_none(), "nothing is given up at the tick back");
+        let polls = take(&outbox);
+        let reads = polls.iter().find(|r| r.path.ends_with("get_messages")).expect("the replies are read");
+        let actions = polls.iter().find(|r| r.path.ends_with("get_browser_actions")).expect("the actions are read");
+        // What Nora queued while the page ran nothing waited eight minutes, by the server's clock.
+        let late = json!({"action": "doc_type_text", "text": "Bonjour", "callback_id": "c1"});
+        answer(&inbox, actions, json!({"actions": [late], "queued_at": [1002.0], "now": 1482.0}));
+        let reply = json!([{"role": "assistant", "text": "Rien n'a été modifié.", "ts": 1483.0}]);
+        answer(&inbox, reads, json!({"messages": reply}));
+        h.run_steps(2);
+        // The turn ends with Nora's reply; reads still on their way are answered alike.
+        for at in [484.0, 490.0, 496.0] {
+            for request in take(&outbox) {
+                if request.path.ends_with("get_messages") {
+                    answer(&inbox, &request, json!({"messages": reply}));
+                } else if request.path.ends_with("get_browser_actions") {
+                    answer(&inbox, &request, json!({"actions": []}));
+                }
+            }
+            h.input_mut().time = Some(at);
+            h.run_steps(2);
+        }
+        assert_eq!(h.state().session.word_count(), 0, "the late action is never played");
+        assert_eq!(h.state().nora.session.resumable(), Some("Write a greeting"));
+        assert!(h.query_by_label("This tab was in the background: Nora could not act in the document.").is_some());
+        take(&outbox);
+        h.get_by_label("Resume").click();
+        h.run_steps(2);
+        let again = take(&outbox);
+        let post = again.iter().find(|r| r.path.ends_with("post_message")).expect("the same request leaves again");
+        assert_eq!(post.body["message"], "Write a greeting");
     }
 
     // //// Neoffice — print, the PDF for an e-mail draft, and the pages a card opens (step 7 of « Nora partout »).

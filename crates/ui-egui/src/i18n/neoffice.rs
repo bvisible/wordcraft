@@ -59,6 +59,8 @@ pub const FRENCH: &[(&str, &str)] = &[
         "Le serveur n'a pas pu répondre (erreur {status}). Réessayez dans un instant.",
     ),
     ("Nora's answer could not be read.", "La réponse de Nora n'a pas pu être lue."),
+    (RESUME.0, "Cet onglet était en arrière-plan : Nora n'a pas pu agir dans le document."),
+    (RESUME.1, "Reprendre"),
 ];
 
 /// The strings the interface looks up whatever the Nora pane does (its ribbon group and its switch in
@@ -77,17 +79,60 @@ const COMPLETE_CATALOGS: &[(&str, &[(&str, &str)])] = &[
     ("sl", &[("Assistant", "Pomočnik"), ("Show the Nora assistant pane (experimental)", "Prikaži podokno pomočnika Nora (eksperimentalno)")]),
 ];
 
+/// What the pane says under a request lost to a tab in the background (craft-libs `ResumeWords`), and its button.
+const RESUME: (&str, &str) = ("This tab was in the background: Nora could not act in the document.", "Resume");
+
+/// [`RESUME`] in every other language of the interface (translated by Haiku, 24.10.2026): the code, the sentence, the
+/// button. French is in [`FRENCH`].
+const RESUME_WORDS: &[(&str, &str, &str)] = &[
+    ("de", "Dieser Tab war im Hintergrund: Nora konnte im Dokument nichts tun.", "Fortsetzen"),
+    ("it", "Questa scheda era in background: Nora non ha potuto agire nel documento.", "Riprendi"),
+    ("es", "Esta pestaña estaba en segundo plano: Nora no pudo actuar en el documento.", "Reanudar"),
+    ("pt-br", "Esta aba estava em segundo plano: a Nora não pôde agir no documento.", "Retomar"),
+    ("nl", "Dit tabblad stond op de achtergrond: Nora kon niet in het document handelen.", "Hervatten"),
+    ("da", "Denne fane var i baggrunden: Nora kunne ikke handle i dokumentet.", "Genoptag"),
+    ("sv", "Den här fliken var i bakgrunden: Nora kunde inte agera i dokumentet.", "Återuppta"),
+    ("pl", "Ta karta była w tle: Nora nie mogła działać w dokumencie.", "Wznów"),
+    ("cs", "Tato karta byla na pozadí: Nora nemohla v dokumentu jednat.", "Pokračovat"),
+    ("sl", "Ta zavihek je bil v ozadju: Nora ni mogla delovati v dokumentu.", "Nadaljuj"),
+    ("hr", "Ova kartica bila je u pozadini: Nora nije mogla djelovati u dokumentu.", "Nastavi"),
+    ("sr", "Ова картица била је у позадини: Нора није могла да делује у документу.", "Настави"),
+    ("sr-latn", "Ova kartica bila je u pozadini: Nora nije mogla da deluje u dokumentu.", "Nastavi"),
+    ("bg", "Този раздел беше във фонов режим: Nora не можа да действа в документа.", "Продължи"),
+    ("ru", "Эта вкладка была в фоновом режиме: Nora не смогла выполнить действие в документе.", "Продолжить"),
+    ("uk", "Ця вкладка була у фоновому режимі: Nora не змогла виконати дію в документі.", "Продовжити"),
+    ("et", "See vahekaart oli taustal: Nora ei saanud dokumendis tegutseda.", "Jätka"),
+    ("hu", "Ez a lap a háttérben volt: Nora nem tudott műveletet végezni a dokumentumban.", "Folytatás"),
+    ("ro", "Această filă era în fundal: Nora nu a putut acționa în document.", "Reia"),
+    ("tr", "Bu sekme arka plandaydı: Nora belgede işlem yapamadı.", "Devam et"),
+    ("vi", "Thẻ này đang ở chế độ nền: Nora không thể thao tác trong tài liệu.", "Tiếp tục"),
+    ("ja", "このタブはバックグラウンドにあったため、Nora はドキュメントを操作できませんでした。", "再開"),
+    ("ko", "이 탭이 백그라운드에 있어서 Nora가 문서에서 작업할 수 없었습니다.", "재개"),
+    ("zh-hans", "此标签页处于后台：Nora 无法在文档中执行操作。", "恢复"),
+    ("zh-hant", "此分頁位於背景：Nora 無法在文件中執行操作。", "恢復"),
+];
+
 /// `s` in `lang`, when Neoffice has translated it.
 pub fn plain(lang: Lang, s: &str) -> Option<&'static str> {
     let code = lang.code();
     if code == "fr" {
         return FRENCH.iter().find(|(english, _)| *english == s).map(|(_, french)| *french);
     }
-    COMPLETE_CATALOGS
+    let complete = COMPLETE_CATALOGS
         .iter()
         .find(|(language, _)| *language == code)
         .and_then(|(_, table)| table.iter().find(|(english, _)| *english == s))
-        .map(|(_, translated)| *translated)
+        .map(|(_, translated)| *translated);
+    complete.or_else(|| {
+        let words = RESUME_WORDS.iter().find(|(language, _, _)| *language == code)?;
+        if s == RESUME.0 {
+            Some(words.1)
+        } else if s == RESUME.1 {
+            Some(words.2)
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(test)]
@@ -125,6 +170,19 @@ mod tests {
             assert!(lang.and_then(|l| plain(l, "Show the Nora assistant pane (experimental)")).is_some(), "{code}");
             assert_eq!(lang.and_then(|l| plain(l, "New conversation")), None, "{code}");
         }
+    }
+
+    #[test]
+    fn the_words_of_a_request_lost_to_a_tab_in_the_background_are_in_every_language() {
+        for lang in crate::i18n::Lang::all().filter(|l| l.code() != "en") {
+            let said = plain(lang, RESUME.0).unwrap_or_else(|| panic!("{}: no sentence", lang.code()));
+            let resume = plain(lang, RESUME.1).unwrap_or_else(|| panic!("{}: no button", lang.code()));
+            assert!(said.contains("Nora") || said.contains("Нора"), "{}: {said:?}", lang.code());
+            assert_ne!(said, RESUME.0, "{}", lang.code());
+            assert!(!resume.is_empty() && resume.trim() == resume, "{}: {resume:?}", lang.code());
+        }
+        assert_eq!(plain(crate::i18n::Lang::EN, RESUME.1), None, "English is the source");
+        assert_eq!(RESUME_WORDS.len() + 2, crate::i18n::Lang::all().count(), "every language but English and French");
     }
 
     #[test]

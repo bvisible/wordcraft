@@ -100,8 +100,10 @@ arboard = { version = "3.6", default-features = false, features = ["wayland-data
 # and 548a214: an appointment card (`Event`) is answered yes or no in the pane.
 # //// Neoffice — 4f48d82 (24.10.2026): a turn is not given up on the clock alone, and a late answer shows as it comes
 # (a tab in the background); the panel builds on egui 0.36 or 0.37 (the editors keep 0.36, the one their lock has).
-craft-nora = { git = "https://github.com/bvisible/craft-libs", rev = "4f48d82591133e2ba10fc9850464fce6a8f046e4" }
-craft-nora-ui = { git = "https://github.com/bvisible/craft-libs", rev = "4f48d82591133e2ba10fc9850464fce6a8f046e4" }
+# //// Neoffice — 1f01bcc (24.10.2026): a request lost to a tab in the background is offered again (Resume, on the click
+# only), an action of a turn given up on never plays later, the links of a long reply are read in linear time.
+craft-nora = { git = "https://github.com/bvisible/craft-libs", rev = "1f01bcc9d5f868014499b4e6b4e617bd9e228c06" }
+craft-nora-ui = { git = "https://github.com/bvisible/craft-libs", rev = "1f01bcc9d5f868014499b4e6b4e617bd9e228c06" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
