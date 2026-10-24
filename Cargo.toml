@@ -96,8 +96,10 @@ arboard = { version = "3.6", default-features = false, features = ["wayland-data
 # the pane's own door, and the document's file handed for an e-mail draft (`doc_export_file`).
 # //// Neoffice — d04a313 (23.10.2026): Nora's little Markdown drawn in her bubbles, not printed (bold, italic, code, lists).
 # //// Neoffice — 72445c1 (23.10.2026): with no bold face of the app (`bold_family: None`), her bold words drawn twice a pixel apart.
-craft-nora = { git = "https://github.com/bvisible/craft-libs", rev = "72445c1e62b1bd06bebd777df976c3e9a7bc59fc" }
-craft-nora-ui = { git = "https://github.com/bvisible/craft-libs", rev = "72445c1e62b1bd06bebd777df976c3e9a7bc59fc" }
+# //// Neoffice — 5ffc07c (24.10.2026): the fork's merge of upstream craft-libs main 7895f5e (the Nora crates' API unchanged),
+# and 548a214: an appointment card (`Event`) is answered yes or no in the pane.
+craft-nora = { git = "https://github.com/bvisible/craft-libs", rev = "5ffc07cc44079e117e44a12514c10cfe39b263b5" }
+craft-nora-ui = { git = "https://github.com/bvisible/craft-libs", rev = "5ffc07cc44079e117e44a12514c10cfe39b263b5" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
