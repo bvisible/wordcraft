@@ -339,8 +339,31 @@ fn detect_system_lang() -> Lang {
     if let Some(l) = std::env::var("WORDCRAFT_LANGUAGE").ok().and_then(|v| lang_from_tag(&v)) {
         return l;
     }
+    // //// Neoffice — the language the hosting page names (`?lang=`, else `?locale=`: the Drive of the Suite sets it to
+    // the person's), before the browser's: a person who works in French gets a French editor in an English browser.
+    if let Some(l) = PAGE_LANGUAGE.get().copied().flatten() {
+        return l;
+    }
     let tags: Vec<String> = sys_locale::get_locales().take(16).collect();
     first_supported(tags.iter().map(String::as_str)).unwrap_or(Lang::EN)
+}
+
+// //// Neoffice — the language the page that hosts the editor names (see `set_page_language`).
+static PAGE_LANGUAGE: OnceLock<Option<Lang>> = OnceLock::new();
+
+// //// Neoffice — the hosting page's language for the `auto` setting, in place of the browser's.
+/// Takes the language the page that hosts the editor names: the first of `tags` (`?lang=`, then `?locale=`, such as
+/// `fr-CH`) that has a catalog. It stands for the system's language, so the `auto` setting follows it; a language
+/// chosen in File › Options still wins. Only the first call counts, and only before [`system_lang`] is first asked.
+/// Tags without a catalog leave the browser's languages to decide.
+pub fn set_page_language<'a>(tags: impl IntoIterator<Item = &'a str>) {
+    let _ = PAGE_LANGUAGE.set(page_language(tags));
+}
+
+// //// Neoffice — what `set_page_language` takes, testable.
+/// The language of the first of `tags` that has a catalog (an empty tag has none).
+pub fn page_language<'a>(tags: impl IntoIterator<Item = &'a str>) -> Option<Lang> {
+    tags.into_iter().filter(|tag| !tag.trim().is_empty()).find_map(lang_from_tag)
 }
 
 /// The system region (#838): it picks the paper File › New starts on, the default measurement

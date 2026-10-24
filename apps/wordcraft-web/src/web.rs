@@ -41,6 +41,9 @@ pub fn start() {
         // `sample` anywhere in the query, so `?author=webgl-fan` turned WebGL on and `?nora=https://sample.example`
         // opened the sample document.
         let flags = crate::flags::Flags::of(&query());
+        // //// Neoffice — the interface's language: the one the page names (`?lang=`, else `?locale=`, which the Drive of
+        // the Suite sets to the person's), before anything asks for the system's; without one, the browser's.
+        wordcraft_ui_egui::i18n::set_page_language(flags.language_tags());
         if flags.webgl
             && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
         {

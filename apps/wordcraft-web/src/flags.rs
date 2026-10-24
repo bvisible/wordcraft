@@ -15,13 +15,30 @@ pub struct Flags {
     /// `?nora` or `?nora=<origin>`: the value as given, empty for a bare `?nora` (`nora_origin::from_param`
     /// says where Nora's calls then go).
     pub nora: Option<String>,
+    /// `?lang=fr`: the interface language the page asks for.
+    pub lang: Option<String>,
+    /// `?locale=fr-CH`: the locale of the hosting page (the Drive of the Suite gives the person's language and the
+    /// system's country); its language is the interface's when `?lang=` names none.
+    pub locale: Option<String>,
 }
 
 impl Flags {
     /// The flags of `search`, the page's `location.search`: its parameters named `webgl`, `sample` and
     /// `nora`, with or without a value.
     pub fn of(search: &str) -> Flags {
-        Flags { webgl: param(search, "webgl").is_some(), sample: param(search, "sample").is_some(), nora: param(search, "nora") }
+        Flags {
+            webgl: param(search, "webgl").is_some(),
+            sample: param(search, "sample").is_some(),
+            nora: param(search, "nora"),
+            lang: param(search, "lang"),
+            locale: param(search, "locale"),
+        }
+    }
+
+    /// The tags that name the interface language, in their order: `?lang=`, then `?locale=` (`i18n::set_page_language`
+    /// takes the first one that has a catalog).
+    pub fn language_tags(&self) -> Vec<&str> {
+        [self.lang.as_deref(), self.locale.as_deref()].into_iter().flatten().collect()
     }
 }
 
@@ -55,8 +72,24 @@ mod tests {
         // The flags themselves, with or without a value, in any order.
         assert_eq!(Flags::of("?webgl"), Flags { webgl: true, ..Flags::default() });
         assert_eq!(Flags::of("?sample"), Flags { sample: true, ..Flags::default() });
-        assert_eq!(Flags::of("?host=parent&sample=1&webgl&nora"), Flags { webgl: true, sample: true, nora: Some(String::new()) });
+        assert_eq!(Flags::of("?host=parent&sample=1&webgl&nora"), Flags { webgl: true, sample: true, nora: Some(String::new()), ..Flags::default() });
         assert_eq!(Flags::of(""), Flags::default());
         assert_eq!(Flags::of("?"), Flags::default());
+    }
+
+    /// The interface's language: `?lang=`, then the hosting page's `?locale=` (the Drive's `fr-CH`), then the
+    /// browser's; a tag without a catalog gives way to the next.
+    #[test]
+    fn the_page_names_the_language_before_the_browser() {
+        use wordcraft_ui_egui::i18n::{Lang, page_language};
+        let fr = Lang::from_code("fr");
+        let tags = |search: &str| Flags::of(search).language_tags().into_iter().map(str::to_string).collect::<Vec<_>>();
+        let page = |search: &str| page_language(tags(search).iter().map(String::as_str));
+        assert_eq!(page("?host=parent&locale=fr-CH"), fr, "the Drive's locale");
+        assert_eq!(page("?locale=fr-CH&lang=de").map(Lang::code), Some("de"), "?lang= first");
+        assert_eq!(page("?lang=xx&locale=fr-CH"), fr, "a language without a catalog gives way");
+        assert_eq!(page("?lang=&locale=it-CH").map(Lang::code), Some("it"), "an empty ?lang= names none");
+        assert_eq!(page("?host=parent&author=Lina"), None, "nothing named: the browser's");
+        assert_eq!(page("?locale=xx-YY"), None);
     }
 }
