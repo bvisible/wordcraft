@@ -63,6 +63,7 @@ pub const FRENCH: &[(&str, &str)] = &[
     (RESUME.1, "Reprendre"),
     (CORRECTION.0, "Rien n'a été fait dans le document : Nora n'a pas pu y agir à temps. Redemandez si vous en avez encore besoin."),
     (CORRECTION.1, "Tout n'a pas été fait : une partie n'a pas pu s'exécuter dans le document à temps."),
+    (OPEN, "Ouvrir Nora"),
 ];
 
 /// The strings the interface looks up whatever the Nora pane does (its ribbon group and its switch in
@@ -243,6 +244,38 @@ const CORRECTION_WORDS: &[(&str, &str, &str)] = &[
     ("zh-hant", "文件中未執行任何操作：Nora 未能及時在文件中操作。如仍需要，請重新提出請求。", "並非全部完成：部分操作未能及時在文件中執行。"),
 ];
 
+/// The words of the button that opens Nora's pane again once it is closed (craft-libs `LauncherWords`).
+const OPEN: &str = "Open Nora";
+
+/// [`OPEN`] in every other language of the interface (translated by Haiku, 26.10.2026). French is in [`FRENCH`].
+const OPEN_WORDS: &[(&str, &str)] = &[
+    ("de", "Nora öffnen"),
+    ("it", "Apri Nora"),
+    ("es", "Abrir Nora"),
+    ("pt-br", "Abrir Nora"),
+    ("nl", "Nora openen"),
+    ("da", "Åbn Nora"),
+    ("sv", "Öppna Nora"),
+    ("pl", "Otwórz Nora"),
+    ("cs", "Otevřít Nora"),
+    ("sl", "Odpri Nora"),
+    ("hr", "Otvori Nora"),
+    ("sr", "Отвори Nora"),
+    ("sr-latn", "Otvori Nora"),
+    ("bg", "Отваряне на Nora"),
+    ("ru", "Открыть Nora"),
+    ("uk", "Відкрити Nora"),
+    ("et", "Ava Nora"),
+    ("hu", "Nora megnyitása"),
+    ("ro", "Deschide Nora"),
+    ("tr", "Nora'yı aç"),
+    ("vi", "Mở Nora"),
+    ("ja", "Nora を開く"),
+    ("ko", "Nora 열기"),
+    ("zh-hans", "打开 Nora"),
+    ("zh-hant", "開啟 Nora"),
+];
+
 /// `s` in `lang`, when Neoffice has translated it.
 pub fn plain(lang: Lang, s: &str) -> Option<&'static str> {
     let code = lang.code();
@@ -254,7 +287,18 @@ pub fn plain(lang: Lang, s: &str) -> Option<&'static str> {
         .find(|(language, _)| *language == code)
         .and_then(|(_, table)| table.iter().find(|(english, _)| *english == s))
         .map(|(_, translated)| *translated);
-    complete.or_else(|| pair(RESUME_WORDS, RESUME, code, s)).or_else(|| pair(CORRECTION_WORDS, CORRECTION, code, s))
+    complete
+        .or_else(|| pair(RESUME_WORDS, RESUME, code, s))
+        .or_else(|| pair(CORRECTION_WORDS, CORRECTION, code, s))
+        .or_else(|| single(OPEN_WORDS, OPEN, code, s))
+}
+
+/// The translation of `english` in `table`, for the language `code`.
+fn single(table: &[(&str, &'static str)], english: &str, code: &str, s: &str) -> Option<&'static str> {
+    if s != english {
+        return None;
+    }
+    table.iter().find(|(language, _)| *language == code).map(|(_, words)| *words)
 }
 
 /// The translation of one of `english`'s two strings in `table`, for the language `code`.
@@ -317,6 +361,16 @@ mod tests {
         }
         assert_eq!(plain(crate::i18n::Lang::EN, RESUME.1), None, "English is the source");
         assert_eq!(RESUME_WORDS.len() + 2, crate::i18n::Lang::all().count(), "every language but English and French");
+    }
+
+    #[test]
+    fn the_words_that_open_nora_again_are_in_every_language() {
+        for lang in crate::i18n::Lang::all().filter(|l| l.code() != "en") {
+            let said = plain(lang, OPEN).unwrap_or_else(|| panic!("{}: no words", lang.code()));
+            assert!(said.contains("Nora") && said != OPEN && said.trim() == said, "{}: {said:?}", lang.code());
+        }
+        assert_eq!(plain(crate::i18n::Lang::EN, OPEN), None, "English is the source");
+        assert_eq!(OPEN_WORDS.len() + 2, crate::i18n::Lang::all().count(), "every language but English and French");
     }
 
     #[test]

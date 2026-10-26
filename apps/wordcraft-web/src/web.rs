@@ -116,7 +116,9 @@ pub fn start() {
                         }
                         bridge.post_ready();
                     }
-                    if let Err(e) = app.execute("ui.nora", serde_json::json!({"value": nora.is_some()})) {
+                    // //// Neoffice — open where the page offers Nora, unless the person closed it on an earlier visit
+                    // (remembered in the browser, nora_pane::open_as_remembered).
+                    if let Err(e) = wordcraft_ui_egui::nora_pane::open_as_remembered(&mut app, nora.is_some()) {
                         log::error!("the Nora pane could not be set: {e}");
                     }
                     // No document to show: start on File › Home, as the desktop app does (#766).
