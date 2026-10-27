@@ -63,7 +63,8 @@ pub const FRENCH: &[(&str, &str)] = &[
     (RESUME.1, "Reprendre"),
     (CORRECTION.0, "Rien n'a été fait dans le document : Nora n'a pas pu y agir à temps. Redemandez si vous en avez encore besoin."),
     (CORRECTION.1, "Tout n'a pas été fait : une partie n'a pas pu s'exécuter dans le document à temps."),
-    (OPEN, "Ouvrir Nora"),
+    (BUTTON.0, "Demander à Nora"),
+    (BUTTON.1, "Nora, l’assistante Neoffice"),
 ];
 
 /// The strings the interface looks up whatever the Nora pane does (its ribbon group and its switch in
@@ -244,36 +245,38 @@ const CORRECTION_WORDS: &[(&str, &str, &str)] = &[
     ("zh-hant", "文件中未執行任何操作：Nora 未能及時在文件中操作。如仍需要，請重新提出請求。", "並非全部完成：部分操作未能及時在文件中執行。"),
 ];
 
-/// The words of the button that opens Nora's pane again once it is closed (craft-libs `LauncherWords`).
-const OPEN: &str = "Open Nora";
+/// The words of Nora's button in the title bar, which opens and closes her pane (craft-libs `LauncherWords`): its label,
+/// and its bubble, as NeoMail says them.
+const BUTTON: (&str, &str) = ("Ask Nora", "Nora, the Neoffice assistant");
 
-/// [`OPEN`] in every other language of the interface (translated by Haiku, 26.10.2026). French is in [`FRENCH`].
-const OPEN_WORDS: &[(&str, &str)] = &[
-    ("de", "Nora öffnen"),
-    ("it", "Apri Nora"),
-    ("es", "Abrir Nora"),
-    ("pt-br", "Abrir Nora"),
-    ("nl", "Nora openen"),
-    ("da", "Åbn Nora"),
-    ("sv", "Öppna Nora"),
-    ("pl", "Otwórz Nora"),
-    ("cs", "Otevřít Nora"),
-    ("sl", "Odpri Nora"),
-    ("hr", "Otvori Nora"),
-    ("sr", "Отвори Nora"),
-    ("sr-latn", "Otvori Nora"),
-    ("bg", "Отваряне на Nora"),
-    ("ru", "Открыть Nora"),
-    ("uk", "Відкрити Nora"),
-    ("et", "Ava Nora"),
-    ("hu", "Nora megnyitása"),
-    ("ro", "Deschide Nora"),
-    ("tr", "Nora'yı aç"),
-    ("vi", "Mở Nora"),
-    ("ja", "Nora を開く"),
-    ("ko", "Nora 열기"),
-    ("zh-hans", "打开 Nora"),
-    ("zh-hant", "開啟 Nora"),
+/// [`BUTTON`] in every other language of the interface (translated by Haiku, 27.10.2026, after NeoMail's French, German,
+/// Italian and Spanish): the code, the label, the bubble. French is in [`FRENCH`].
+const BUTTON_WORDS: &[(&str, &str, &str)] = &[
+    ("de", "Nora fragen", "Nora, die Neoffice-Assistentin"),
+    ("it", "Chiedi a Nora", "Nora, l'assistente Neoffice"),
+    ("es", "Preguntar a Nora", "Nora, la asistente de Neoffice"),
+    ("pt-br", "Perguntar à Nora", "Nora, a assistente Neoffice"),
+    ("nl", "Nora vragen", "Nora, de Neoffice-assistente"),
+    ("da", "Spørg Nora", "Nora, Neoffice-assistenten"),
+    ("sv", "Fråga Nora", "Nora, Neoffice-assistenten"),
+    ("pl", "Zapytaj Norę", "Nora, asystentka Neoffice"),
+    ("cs", "Zeptat se Nory", "Nora, asistentka Neoffice"),
+    ("sl", "Vprašajte Noro", "Nora, asistentka Neoffice"),
+    ("hr", "Pitajte Noru", "Nora, asistentica Neoffice"),
+    ("sr", "Питајте Nora", "Nora, асистенткиња Neoffice"),
+    ("sr-latn", "Pitajte Noru", "Nora, asistentkinja Neoffice"),
+    ("bg", "Попитайте Nora", "Nora, асистентката на Neoffice"),
+    ("ru", "Спросить Nora", "Nora, ассистентка Neoffice"),
+    ("uk", "Запитати Nora", "Nora, асистентка Neoffice"),
+    ("et", "Küsi Noralt", "Nora, Neoffice'i assistent"),
+    ("hu", "Kérdezze Norát", "Nora, a Neoffice asszisztense"),
+    ("ro", "Întrebați-o pe Nora", "Nora, asistenta Neoffice"),
+    ("tr", "Nora'ya sorun", "Nora, Neoffice asistanı"),
+    ("vi", "Hỏi Nora", "Nora, trợ lý của Neoffice"),
+    ("ja", "Noraに質問", "Nora、Neoffice のアシスタント"),
+    ("ko", "Nora에게 문의", "Nora, Neoffice 어시스턴트"),
+    ("zh-hans", "询问 Nora", "Nora，Neoffice 助手"),
+    ("zh-hant", "詢問 Nora", "Nora，Neoffice 助理"),
 ];
 
 /// `s` in `lang`, when Neoffice has translated it.
@@ -290,15 +293,7 @@ pub fn plain(lang: Lang, s: &str) -> Option<&'static str> {
     complete
         .or_else(|| pair(RESUME_WORDS, RESUME, code, s))
         .or_else(|| pair(CORRECTION_WORDS, CORRECTION, code, s))
-        .or_else(|| single(OPEN_WORDS, OPEN, code, s))
-}
-
-/// The translation of `english` in `table`, for the language `code`.
-fn single(table: &[(&str, &'static str)], english: &str, code: &str, s: &str) -> Option<&'static str> {
-    if s != english {
-        return None;
-    }
-    table.iter().find(|(language, _)| *language == code).map(|(_, words)| *words)
+        .or_else(|| pair(BUTTON_WORDS, BUTTON, code, s))
 }
 
 /// The translation of one of `english`'s two strings in `table`, for the language `code`.
@@ -364,13 +359,15 @@ mod tests {
     }
 
     #[test]
-    fn the_words_that_open_nora_again_are_in_every_language() {
+    fn the_words_of_nora_s_button_are_in_every_language() {
         for lang in crate::i18n::Lang::all().filter(|l| l.code() != "en") {
-            let said = plain(lang, OPEN).unwrap_or_else(|| panic!("{}: no words", lang.code()));
-            assert!(said.contains("Nora") && said != OPEN && said.trim() == said, "{}: {said:?}", lang.code());
+            for english in [BUTTON.0, BUTTON.1] {
+                let said = plain(lang, english).unwrap_or_else(|| panic!("{}: no translation of {english:?}", lang.code()));
+                assert!(!said.is_empty() && said != english && said.trim() == said, "{}: {said:?}", lang.code());
+            }
         }
-        assert_eq!(plain(crate::i18n::Lang::EN, OPEN), None, "English is the source");
-        assert_eq!(OPEN_WORDS.len() + 2, crate::i18n::Lang::all().count(), "every language but English and French");
+        assert_eq!(plain(crate::i18n::Lang::EN, BUTTON.0), None, "English is the source");
+        assert_eq!(BUTTON_WORDS.len() + 2, crate::i18n::Lang::all().count(), "every language but English and French");
     }
 
     #[test]

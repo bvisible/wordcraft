@@ -359,6 +359,7 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
                         ui.add_space(8.0);
                     }
                     search_box(app, ui, control_h);
+                    crate::nora_pane::top_button(app, ui); // //// Neoffice — Nora's button, where the page offers her (nora_pane.rs) ////
                     right_start = ui.min_rect().min.x;
                 });
             });

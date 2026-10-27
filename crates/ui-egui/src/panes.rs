@@ -58,9 +58,6 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                 }
                 crate::nora_pane::show(app, ui);
             });
-    } else {
-        // //// Neoffice — closed by its cross, a rail with Nora's sphere opens it again (`nora_pane::rail`).
-        crate::nora_pane::rail(app, ui);
     }
     if app.session.view.styles_pane {
         egui::Panel::right("styles_pane")

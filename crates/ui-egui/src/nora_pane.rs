@@ -204,19 +204,20 @@ pub(crate) fn remember(open: bool) {
     PaneMemory::new(MEMORY).remember(open);
 }
 
-/// While the pane is closed where Nora is offered: a rail at the right edge of the window, beside the document, with
-/// Nora's sphere (craft-nora-ui `launcher`), which opens the pane again on the same conversation.
-pub fn rail(app: &mut WordApp, ui: &mut Ui) {
+/// Nora's button in the title bar, at the right beside the search box, whatever tab of the ribbon is in view, where the
+/// page offers Nora (craft-nora-ui `launcher::button`, NeoMail's « Ask Nora »): a click opens or closes the pane on the
+/// same conversation, and the person's choice is remembered in the browser. Lit while the pane is open.
+pub fn top_button(app: &mut WordApp, ui: &mut Ui) {
     if app.services.nora_http.is_none() {
         return;
     }
-    let t = crate::theme::Tokens::get(ui.ctx());
-    let words = LauncherWords { open: tl!("Open Nora").to_string() };
-    let frame = egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(0, 10)).stroke(egui::Stroke::new(1.0, t.border));
-    let response = craft_nora_ui::launcher::rail(ui, frame, &words);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &words.open));
-    if response.clicked() && app.run("ui.nora", json!({"value": true})).is_ok() {
-        remember(true);
+    let words = LauncherWords { label: tl!("Ask Nora").to_string(), tip: tl!("Nora, the Neoffice assistant").to_string() };
+    let open = app.ui.nora_pane;
+    ui.add_space(8.0);
+    let response = craft_nora_ui::launcher::button(ui, &words, open);
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, open, &words.label));
+    if response.clicked() && app.run("ui.nora", json!({"value": !open})).is_ok() {
+        remember(!open);
     }
 }
 
@@ -918,11 +919,10 @@ mod tests {
         assert!(!old.nora_pane);
     }
 
-    /// Closed, the pane leaves a rail with Nora's sphere at the right edge where Nora is offered; its click opens the pane
-    /// again on the same conversation. Where Nora isn't offered, no rail. Outside a browser nothing is remembered: the
-    /// pane opens as before.
+    /// Nora's button in the title bar closes the pane and opens it again, on the same conversation; it is there only where
+    /// Nora is offered. Outside a browser nothing is remembered: the pane opens as before.
     #[test]
-    fn a_closed_pane_leaves_a_rail_that_opens_it_again() {
+    fn nora_s_button_in_the_title_bar_closes_and_opens_the_pane() {
         let (services, outbox, inbox) = connected();
         let mut a = app(services);
         assert_eq!(open_as_remembered(&mut a, true).unwrap(), json!({"nora": true}));
@@ -935,23 +935,21 @@ mod tests {
         answer(&inbox, &first[0], json!({"thread_id": "t1"}));
         h.run_steps(6);
         assert_eq!(h.state().nora.session.thread_id(), Some("t1"));
-        assert!(h.query_by_label("Open Nora").is_none(), "no rail while the pane is open");
-        h.state_mut().run("ui.nora", json!({"value": false})).unwrap();
+        let button = h.get_by_label("Ask Nora").rect();
+        assert!(button.max.y < 60.0, "in the title bar (the test window keeps a margin of its own): {button:?}");
+        h.get_by_label("Ask Nora").click();
         h.run_steps(4);
-        let rail = h.get_by_label("Open Nora").rect();
-        // At the right edge (the test window keeps a margin of its own).
-        assert!(rail.min.x >= 1440.0 - craft_nora_ui::launcher::RAIL_WIDTH - 16.0, "at the right edge: {rail:?}");
-        h.get_by_label("Open Nora").click();
+        assert!(!h.state().ui.nora_pane, "closed");
+        h.get_by_label("Ask Nora").click();
         h.run_steps(4);
         assert!(h.state().ui.nora_pane, "open again");
         assert_eq!(h.state().nora.session.thread_id(), Some("t1"), "on the same conversation");
-        assert!(h.query_by_label("Open Nora").is_none());
-        // Where Nora isn't offered: off, and no rail.
+        // Where Nora isn't offered: off, and no button.
         let mut alone = app(Services::default());
         assert_eq!(open_as_remembered(&mut alone, false).unwrap(), json!({"nora": false}));
         let mut h = harness(alone);
         h.run_steps(4);
-        assert!(h.query_by_label("Open Nora").is_none());
+        assert!(h.query_by_label("Ask Nora").is_none());
     }
 
     /// File › Options › Advanced › Assistant is the `ui.nora` setting.
