@@ -311,7 +311,19 @@ fn pair(table: &[(&str, &'static str, &'static str)], english: (&str, &str), cod
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::i18n::catalog::placeholders;
+
+    /// The `{name}` placeholders of a string, sorted (upstream's catalog module that had this is gone with the catalogs).
+    fn placeholders(text: &str) -> Vec<&str> {
+        let mut names = Vec::new();
+        let mut rest = text;
+        while let Some((_, after_open)) = rest.split_once('{') {
+            let Some((name, after_close)) = after_open.split_once('}') else { break };
+            names.push(name);
+            rest = after_close;
+        }
+        names.sort_unstable();
+        names
+    }
 
     #[test]
     fn every_french_string_keeps_the_placeholders_of_its_english() {

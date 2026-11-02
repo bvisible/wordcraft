@@ -82,6 +82,11 @@ mod tests {
     #[test]
     fn the_page_names_the_language_before_the_browser() {
         use wordcraft_ui_egui::i18n::{Lang, page_language};
+        // The catalogs are an input of the build since v0.14.0 (CRAFT_I18N_DIR); without them there is English only.
+        if Lang::all().count() < 2 {
+            eprintln!("skipped: built without craft-i18n (CRAFT_I18N_DIR); the interface is English only");
+            return;
+        }
         let fr = Lang::from_code("fr");
         let tags = |search: &str| Flags::of(search).language_tags().into_iter().map(str::to_string).collect::<Vec<_>>();
         let page = |search: &str| page_language(tags(search).iter().map(String::as_str));

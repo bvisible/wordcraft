@@ -10,9 +10,9 @@ At the next upstream merge, `grep -rn "////"` in the source plus this file give 
 picture of what is ours and why.
 
 - **Upstream**: `storytold/wordcraft`, branch `main`.
-- **Base of the divergence**: `9130181a5fdaee2293e67756fd5458c601489f3c`, the tag `v0.10.0`, merged on 2026-10-23
-  (before: `a9afeb4`, upstream's `main` of 2026-10-14; `version-15` was cut at the tag `v0.6.1`, `7dfa6b0`, on
-  2026-10-13). Move it at each upstream merge. The check works it out itself (the common ancestor with
+- **Base of the divergence**: `5cd53f184aab11def13b7fced18727159b9bc96a`, the tag `v0.14.0`, merged on 2026-11-02
+  (before: `9130181`, the tag `v0.10.0`, merged on 2026-10-23, and `a9afeb4`, upstream's `main` of 2026-10-14;
+  `version-15` was cut at the tag `v0.6.1`, `7dfa6b0`, on 2026-10-13). Move it at each upstream merge. The check works it out itself (the common ancestor with
   upstream's `main`), so this line is for the reader.
 
 ## What the fork adds
@@ -27,18 +27,20 @@ their own `//// Neoffice — added file` header.
   upstream's code since the common ancestor carries no marker.
 - `.github/workflows/neoffice-ci.yml`: runs upstream's own quality gate, `cargo xtask ci`, on a
   GitHub runner (by hand, or on a push that touches code), because the maintainer's Mac has too
-  little disk to run it for every change. Since v0.10.0 it checks out `craft-fonts` at the commit
-  upstream's own gate (`ci.yml`) and release use, as that gate does. Upstream's `ci.yml`, `nix.yml`
-  and `sonarcloud.yml` (new in v0.10.0) are disabled on this fork, like its other workflows.
+  little disk to run it for every change. It checks out `craft-fonts` at the commit upstream's own gate
+  (`ci.yml`) and release use, as that gate does, and, since v0.14.0, `craft-i18n` at the commit of `craft-i18n.rev`
+  (the interface translations left the repository: without that checkout the interface is English only);
+  `neoffice-web.yml` does the same, and fails when French, German, Spanish and Italian are not in the wasm. Upstream's
+  `ci.yml`, `nix.yml` and `sonarcloud.yml` are disabled on this fork, like its other workflows.
 - **The Nora assistant pane** (Neoffice's assistant, in a pane at the right of the page), off until
   File › Options › Advanced › Assistant or the `ui.nora` command turns it on. It is built on
   `craft-nora` (the conversation with Nora, no I/O) and `craft-nora-ui` (the egui panel), two crates
   of Neoffice's `craft-libs` fork that depend on egui only. New file
   `crates/ui-egui/src/nora_pane.rs`; marked changes in `Cargo.toml` and `crates/ui-egui/Cargo.toml`
-  (the two dependencies), `crates/ui-egui/src/lib.rs` (the `nora_pane` preference, the `ui.nora`
-  command, `Services::nora_http` and `Services::nora_inbox` for the host's connection, the pane's
-  state), `crates/ui-egui/src/panes.rs` (the pane) and `crates/ui-egui/src/options.rs` (the
-  checkbox). Without a host connection, which is every build today, the pane says that Nora isn't
+  (the two dependencies), `crates/ui-egui/src/lib.rs` (the `nora_pane` preference, the pane's
+  state), `crates/ui-egui/src/app/commands.rs` (the `ui.nora` command), `crates/ui-egui/src/services.rs`
+  (`Services::nora_http` and `Services::nora_inbox` for the host's connection), `crates/ui-egui/src/panes/host.rs`
+  (the pane's panel, outermost at the right) and `crates/ui-egui/src/options.rs` (the checkbox). Without a host connection, which is every build today, the pane says that Nora isn't
   available and offers no text box. With one, what Nora asks for in the document is played through
   `WordApp::execute`, editing commands only (`refusal` in `nora_pane.rs`): not those that open, save,
   close or replace a document (the mail merge's included, and a comparison shown in a new document),
@@ -50,7 +52,7 @@ their own `//// Neoffice — added file` header.
   text: `path` is also a place in the document) or holds a password, at any depth. A command that asks
   the interface for a dialog, a file picker or a pane's search box is refused: while the pane plays a
   command, `WordApp::after_command` hands such requests to the pane instead of acting on them (a
-  marked line in `crates/ui-egui/src/lib.rs`). Nora's commands also run with automation roots that
+  marked line in `crates/ui-egui/src/app/commands.rs`). Nora's commands also run with automation roots that
   grant no file at all (`AutomationRoots::none`, added in `crates/engine/src/file_access.rs` with its
   test). An action that fails puts back the document, its undo history and the person's view as they
   were. The pane's Undo takes back Nora's last change only while the document is still at the revision
@@ -60,18 +62,21 @@ their own `//// Neoffice — added file` header.
   `Cargo.toml` pins `adbcef6`). While Nora works the panel's Send button is a Stop button, and a failure of
   the connection to Nora is said in the interface language (`error_words`, French in `i18n/neoffice.rs`). At the undo limit (500 steps) the pane counts Nora's steps with
   upstream's `Session::undo_mark` (v0.10.0; ours, `undo_pushed`, gave the same count and is gone) and rolls a
-  failed action back with `Session::edit_snapshot_whole`, added in `crates/engine/src/session.rs` (marked):
+  failed action back with `Session::edit_snapshot_whole`, added in `crates/engine/src/session/snapshot.rs` (marked):
   `undo_depth` stops growing there, and `edit_snapshot` keeps only the oldest four steps. The Spike
   (`edit.spike`, `edit.insertSpike`, v0.10.0) and Load System Installed Fonts are the person's, refused like
   the clipboard and the fonts they added; so is Set Proofing Language with `default: true`, which also saves the
   language for the person's future documents (the language of the text itself stays Nora's).
   Her strings are translated outside upstream's catalogs, in the new file
-  `crates/ui-egui/src/i18n/neoffice.rs` (French), which `i18n::tr` falls back to (one marked line in
-  `crates/ui-egui/src/i18n/mod.rs`).
+  `crates/ui-egui/src/i18n/neoffice.rs` (French), which `i18n::tr` falls back to (marked lines in
+  `crates/ui-egui/src/i18n.rs`). It refuses the commands that open, create, close or switch to another document or
+  open another window (`switches_document`, `crates/ui-egui/src/host_guard.rs`), which now includes
+  `file.closeDocument`, `view.switchWindows`, `view.newWindow` and `mailings.printDocuments` (v0.14.0 keeps several
+  documents open).
   The browser build connects the pane with a `fetch` made with the hosting page's own session
   (new file `apps/wordcraft-web/src/web/nora.rs`; marked changes in `apps/wordcraft-web/src/web.rs`
   and the web-sys features of `apps/wordcraft-web/Cargo.toml`, and a re-export in
-  `crates/ui-egui/src/lib.rs`): a page that asks for it with `?nora` gets the pane open and connected
+  `crates/ui-egui/src/lib.rs`, the types in `services.rs`): a page that asks for it with `?nora` gets the pane open and connected
   to the page's own origin; every other page behaves exactly as before. `?nora=<origin>` is taken only
   when it is the page's own origin, or a loopback origin from a loopback page (the workshop's stand-in
   server); any other origin the address names is refused with a console warning, and only the hosting
@@ -85,41 +90,47 @@ their own `//// Neoffice — added file` header.
   which builds the two new modules for the native tests too): upstream found `webgl` and `sample`
   anywhere in the query, so `?author=webgl-fan` forced WebGL2 and `?nora=https://sample.example` opened
   the sample document.
-- **The host bridge of the browser build** (new file `apps/wordcraft-web/src/web/host.rs`; marked
-  changes in `apps/wordcraft-web/src/web.rs`, the web-sys features of `apps/wordcraft-web/Cargo.toml`
-  and one line in `crates/ui-egui/src/i18n/neoffice.rs`): the `postMessage` contract of a page that
-  frames the editor (`?host=parent`, same origin), the one upstream's GridCraft and PdfCraft already
-  use, so one host page (the Drive of the Suite, NeoDesk's window) drives every Craft editor:
-  `wordcraft:ready`, `wordcraft:open` (a file to edit), `wordcraft:save` (every file the editor would
-  download), `wordcraft:dirty` and `wordcraft:failed`, plus `wordcraft:saved` (`ok: false` marks the
-  document unsaved again and says why, a later `ok: true` marks it saved again when it has not changed since it was handed over: ours, upstream's bridges have no answer to a save) and
-  `?author=` (the name that signs comments, over the name stored on an earlier visit). Since v0.10.0 each
+- **The host bridge of the browser build**: since v0.11.0 upstream ships the bridge itself
+  (`apps/wordcraft-web/src/host.rs`, `?host=parent`, same origin: `wordcraft:ready`, `wordcraft:open`,
+  `wordcraft:save` with its `saveAs`, `wordcraft:dirty`, `wordcraft:failed`, and `?author=`), the contract one host page (the
+  Drive of the Suite, NeoDesk's window) uses to drive every Craft editor. Ours is what it lacks, marked in that file
+  (our own `apps/wordcraft-web/src/web/host.rs` is gone): `wordcraft:saved` (`ok: false` marks the
+  document unsaved again and says why, a later `ok: true` marks it saved again when it has not changed since it was
+  handed over: upstream's bridges have no answer to a save), the page's `id` for the file it opens, the page's files in an
+  inbox of their own, and the flags below it sets on `Services`. Marked changes in `apps/wordcraft-web/src/web.rs` (the
+  shell settles the answers; the name and initials stored on an earlier visit do not sign a hosted visit, and stay what
+  the browser stores) and the web-sys features of `apps/wordcraft-web/Cargo.toml`. Since v0.10.0 each
   save handed over is a save that finishes later on upstream's tickets (`async_saves`, #1315), as one in the
-  browser's save picker is: the new file `crates/ui-egui/src/host_saves.rs` starts the ticket and ends it with
-  the page's answer, and a refusal takes upstream's own path (`settle_async_saves`, one marked line for "Couldn't
-  save" instead of "Couldn't download"); it replaces the `PickerSaves` additions upstream's `web.rs` no longer
-  has. The page's `ready`, `?author=` and the Nora pane's state are applied after the preferences upstream's
-  browser build now keeps (`prefs.rs`, `localStorage`); with a hosting page, the name and initials stored on an
-  earlier visit are not taken (perhaps someone else's, on a shared browser) and the page's file names are not
-  kept in the stored Recent list. Without `?host=parent` the editor behaves as before.
-  Drop it when upstream ships its own bridge for WordCraft, keeping `wordcraft:saved`.
+  browser's save picker is: the new file `crates/ui-egui/src/host_saves.rs` starts the ticket (from upstream's
+  `host_save` and `download` hooks, which the bridge sets, and `Services::async_saves` stays the app's, where
+  upstream's bridge clears it) and ends it with the page's answer, and a refusal takes upstream's own path
+  (`settle_async_saves`, one marked line for "Couldn't save" instead of "Couldn't download"). The Nora pane's state is
+  applied after the preferences upstream's browser build keeps (`prefs.rs`, `localStorage`); with a hosting page, the
+  page's file names are not kept in the stored Recent list. Without `?host=parent` the editor behaves as before.
 
 - **What a hosting page changes about the editor** (`Services::keep_text_format` and
-  `Services::hide_community_links`, both set by `apps/wordcraft-web/src/web/host.rs`, so only when a page frames the
+  `Services::hide_community_links`, both set by `apps/wordcraft-web/src/host.rs`, so only when a page frames the
   editor with `?host=parent`): a document opened from a text file (`.txt`, `.md`) is saved under its own name and in its
   own format, and counts as saved (upstream turns it into a `.docx` and leaves it unsaved); the links to upstream's
   community (Discord) are not shown (title bar, Help tab, File menu, About dialog, Options), and the `ui.discord`
-  command does nothing. Marked changes in `crates/ui-egui/src/lib.rs` (the two fields, `default_save_name`, the download
-  branch of `execute`, `ui.discord`, three small functions and two tests), `chrome.rs`, `ribbon.rs`, `backstage.rs`,
-  `dialogs.rs` and `options.rs`. Every other build behaves as before.
+  command does nothing. Upstream's own bridge now saves a file under the name it was opened with, as a desktop Save
+  does (v0.11.0); what remains ours is that a text file counts as saved. Marked changes in
+  `crates/ui-egui/src/services.rs` (the two fields), `app/files.rs` (`default_save_name`), `app/commands.rs` (the download
+  branch of `execute`, `ui.discord`), the new file `host_guard.rs` (the small functions and their tests), `chrome.rs`,
+  `ribbon/review.rs`, `backstage.rs`, `dialogs/dispatch.rs` and `options.rs`. Every other build behaves as before.
 
 - **A hosting page opens the documents** (`Services::host_owns_documents`, set by
-  `apps/wordcraft-web/src/web/host.rs`, so only when a page frames the editor with `?host=parent`): the editor does not
-  switch to another document by itself. New, Open, Close, New from Template, Recover, Rename (v0.10.0: the next save
-  would reach the page under another name), a comparison shown in the revised or a new document (the page's document
-  would become an untitled one) and the Mailings commands that
-  make a new document are refused with a status message (`run` in `crates/ui-egui/src/lib.rs`, `switches_document`),
-  File › Home, New, Open, Recover (v0.10.0) and Close are not pages of the File menu (`backstage.rs`) and no Start screen shows, and a document
+  `apps/wordcraft-web/src/host.rs`, so only when a page frames the editor with `?host=parent`): the editor does not
+  switch to another document by itself, and the page's document is the only one and in the only window. Since v0.14.0
+  upstream keeps several documents open and its own `discards_document` names `file.close` alone, so the guard stands on its
+  own list (`switches_document`, new file `crates/ui-egui/src/host_guard.rs`): New, Open, Close, Close Document (by id),
+  New from Template, Recover, Rename (v0.10.0: the next save would reach the page under another name), Switch Windows,
+  New Window, Labels, Print Documents, an envelope or a merge made in a new document, and a comparison shown in the
+  revised or a new document (the page's document would become an untitled one) are refused with a status message (`run` in
+  `crates/ui-egui/src/app/commands.rs`); a test runs each of them in a hosted editor and another scans the engine for a
+  command that adds, replaces, switches or closes a document without being named. New Window, Switch Windows, Labels and
+  Finish & Merge have no button in a hosted ribbon (`ribbon/view.rs`, `ribbon/mailings.rs`). File › Home, New, Open, Recover
+  (v0.10.0) and Close are not pages of the File menu (`backstage.rs`) and no Start screen shows (`app.rs`), and a document
   dropped on the editor is not taken (`opens_as_document`, asked by `apps/wordcraft-web/src/web.rs`); in every browser
   build, a file picked for a picture, a font or a recipient list that is none of these is not taken either
   (`picked_file_fits`, asked by the picker in `web.rs`: the picker's filter is only a suggestion, and the inbox would
@@ -133,7 +144,7 @@ their own `//// Neoffice — added file` header.
   otherwise, so upstream's builds and every test run are unchanged. `i18n::tr` passes its result through
   `brand::rebrand`, which swaps the whole word `WordCraft` in every language without touching the catalogs (the licence
   line keeps it); the title bar, the window title, two error messages and the page that failed to start call
-  `brand::name()` (marked lines in `lib.rs`, `chrome.rs`, `i18n/mod.rs` and `apps/wordcraft-web/src/web.rs`). The page
+  `brand::name()` (marked lines in `app/commands.rs`, `windows.rs`, `chrome.rs`, `i18n.rs` and `apps/wordcraft-web/src/web.rs`). The page
   title and the loading text are ours in `apps/wordcraft-web/index.html`. Stored or compared names (storage folders,
   `WordCraft User`, `wordcraft:*` messages, `ai.storyteller.*`) and the native app keep upstream's.
 

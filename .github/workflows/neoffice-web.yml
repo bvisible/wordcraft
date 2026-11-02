@@ -39,6 +39,31 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: neoffice-web
+      # //// Neoffice — the interface translations are not in the repository since v0.14.0: they are an input of the build
+      # (crates/ui-egui/build.rs reads CRAFT_I18N_DIR), at the commit craft-i18n.rev names. Without them the browser build's
+      # interface is English only, whatever the language the hosting page names (`?lang=`). Upstream's release job does this
+      # with its shared action (storytold/craft-common-actions, tracked at @main); this fork only allows the actions it lists,
+      # so the same steps are written out. CRAFT_I18N_REQUIRED=1 makes a build without them fail.
+      - name: Read craft-i18n.rev
+        id: i18n
+        run: |
+          set -euo pipefail
+          rev=$(tr -d '[:space:]' < craft-i18n.rev)
+          if ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error file=craft-i18n.rev::expected one 40-character craft-i18n commit SHA, found '$rev'"
+            exit 1
+          fi
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+      - name: Check out craft-i18n
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-i18n
+          ref: ${{ steps.i18n.outputs.rev }}
+          path: craft-i18n
+      - name: Build with the interface translations
+        run: |
+          echo "CRAFT_I18N_DIR=${GITHUB_WORKSPACE}/craft-i18n" >> "$GITHUB_ENV"
+          echo "CRAFT_I18N_REQUIRED=1" >> "$GITHUB_ENV"
       - name: Install trunk 0.21.14 (SHA-256 pinned, as upstream's release job does)
         run: |
           set -euo pipefail
@@ -53,6 +78,20 @@ jobs:
         env:
           NEOFFICE_PRODUCT_NAME: NeoDoc
         run: packaging/web/package.sh
+      # //// Neoffice — the zip must hold the translations our customers read: French, German, Spanish and Italian (a string
+      # of each catalog's WordCraft rows, which are in the wasm as the catalogs' own text). A build whose languages were
+      # dropped would still start, in English.
+      - name: The interface languages are in the build
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          unzip -q dist/release/wordcraft-web-*.zip -d "$work"
+          wasm=$(find "$work" -name '*.wasm' | head -n 1)
+          test -n "$wasm"
+          for word in "Suivi des modifications" "Seite einrichten" "Configurar página" "Imposta pagina"; do
+            grep -q -a -F "$word" "$wasm" || { echo "::error::'$word' is not in $wasm: a language of the interface is missing"; exit 1; }
+            echo "found: $word"
+          done
       - name: Checksums
         run: |
           set -euo pipefail

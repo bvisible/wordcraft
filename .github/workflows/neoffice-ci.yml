@@ -9,15 +9,17 @@ on:
   workflow_dispatch:
   push:
     branches: [version-15]
-    paths: ["crates/**", "apps/**", "xtask/**", "Cargo.toml", "Cargo.lock", ".github/workflows/neoffice-ci.yml"]
+    # //// Neoffice — the interface translations moved out of the repository in v0.14.0 (craft-i18n.rev names their commit):
+    # a move of that pin changes what the tests see.
+    paths: ["crates/**", "apps/**", "xtask/**", "Cargo.toml", "Cargo.lock", "craft-i18n.rev", ".github/workflows/neoffice-ci.yml"]
 
 permissions:
   contents: read
 
 env:
-  # As upstream's own gate (ci.yml, v0.10.0): the craft-fonts commit its release embeds, so the layout tests see the
+  # As upstream's own gate (ci.yml, v0.14.0): the craft-fonts commit its release embeds, so the layout tests see the
   # fonts a release build has (an optional build input, crates/fonts/build.rs).
-  CRAFT_FONTS_REF: 8dcdacd5153e64560d109541a47d806f26f048c0
+  CRAFT_FONTS_REF: b076417b5880bd4154bd22f00695b1d28c6bea83
 
 concurrency:
   group: neoffice-ci-${{ github.ref }}
@@ -40,6 +42,30 @@ jobs:
           repository: storytold/craft-fonts
           ref: ${{ env.CRAFT_FONTS_REF }}
           path: craft-fonts
+      # //// Neoffice — the interface translations are not in the repository since v0.14.0: they are an input of the build
+      # (crates/ui-egui/build.rs reads CRAFT_I18N_DIR), at the commit craft-i18n.rev names. Upstream's gate does this with its
+      # own shared action (storytold/craft-common-actions, tracked at @main); this fork only allows the actions it lists, so
+      # the same two steps are written out. With CRAFT_I18N_REQUIRED=1 a build without them fails instead of showing English.
+      - name: Read craft-i18n.rev
+        id: i18n
+        run: |
+          set -euo pipefail
+          rev=$(tr -d '[:space:]' < craft-i18n.rev)
+          if ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error file=craft-i18n.rev::expected one 40-character craft-i18n commit SHA, found '$rev'"
+            exit 1
+          fi
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+      - name: Check out craft-i18n
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-i18n
+          ref: ${{ steps.i18n.outputs.rev }}
+          path: craft-i18n
+      - name: Build with the interface translations
+        run: |
+          echo "CRAFT_I18N_DIR=${GITHUB_WORKSPACE}/craft-i18n" >> "$GITHUB_ENV"
+          echo "CRAFT_I18N_REQUIRED=1" >> "$GITHUB_ENV"
       - name: Linux build dependencies (winit, wgpu, rfd, audio)
         run: |
           sudo apt-get update
@@ -57,4 +83,7 @@ jobs:
       - name: Quality gate
         env:
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+          # As upstream's gate (craft-common-actions gate.yml, `require-craft-fonts`): two tests of v0.14.0 panic without the
+          # fonts, so a build that silently drops them fails here as it would in a release.
+          CRAFT_FONTS_REQUIRED: "1"
         run: cargo xtask ci

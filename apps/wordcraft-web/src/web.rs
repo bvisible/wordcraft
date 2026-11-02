@@ -15,8 +15,6 @@ const RECIPIENT_EXTS: &[&str] = wordcraft_engine::cmd::mailings::RECIPIENT_EXTEN
 mod font_store;
 // //// Neoffice — added module: the Nora pane's connection (a `fetch` with the page's own session).
 mod nora;
-// //// Neoffice — added module: the `postMessage` bridge to the page that frames the editor (`?host=parent`).
-mod host;
 const CANVAS_ID: &str = "wordcraft_canvas";
 const LOADING_ID: &str = "wordcraft_loading";
 
@@ -31,9 +29,15 @@ pub fn start() {
             log::error!("missing <canvas id=\"{CANVAS_ID}\">");
             return;
         };
+        // `?host=parent`: a same-origin page framing WordCraft opens documents in it and stores
+        // what it saves (`host`). That page guards leaving it, so this one doesn't.
+        let bridge = if query_param("host").as_deref() == Some("parent") { crate::host::Bridge::new() } else { None };
+        let app_bridge = bridge.clone();
         let dirty = Rc::new(Cell::new(false));
         let saves = AsyncSaves::default();
-        if let Err(e) = guard_unload(dirty.clone(), saves.clone()) {
+        if bridge.is_none()
+            && let Err(e) = guard_unload(dirty.clone(), saves.clone())
+        {
             log::error!("no unsaved-changes guard: {e}");
         }
         let mut options = eframe::WebOptions::default();
@@ -49,10 +53,6 @@ pub fn start() {
         {
             create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
         }
-        // //// Neoffice — a page that frames the editor and asks for the bridge (`?host=parent`) sends it the file to
-        // edit and takes what it saves.
-        let bridge = host::Bridge::requested();
-        let app_bridge = bridge.clone();
         let result = eframe::WebRunner::new()
             .start(
                 canvas,
@@ -71,15 +71,16 @@ pub fn start() {
                     // The browser's locale picks the new document's paper, the units and the
                     // decimal separator (#838).
                     let region = wordcraft_ui_egui::i18n::system_region();
+                    // In host mode the parent sends the document to edit; no sample meanwhile.
                     // //// Neoffice — `?sample` read by name (see `flags` above).
-                    let sample = flags.sample;
+                    let sample = app_bridge.is_none() && flags.sample;
                     let doc = if sample { wordcraft_engine::sample::sample_document() } else { wordcraft_engine::blank_document(&region) };
                     let mut session = Session::new(doc);
                     session.system_region = region;
                     let messages = Rc::new(RefCell::new(Vec::new()));
                     let mut services = services(inbox.clone(), cc.egui_ctx.clone(), dirty, saves.clone(), messages.clone());
-                    // //// Neoffice — the hosting page gets the saves and the unsaved-changes flag, and sends files. Each save it
-                    // is handed finishes when it answers, on upstream's tickets (`host_saves`).
+                    // //// Neoffice — upstream's bridge, plus what the Suite's Drive and Neodesk need of it: each save the page
+                    // is handed finishes when it answers (`wordcraft:saved`), on upstream's tickets (`host_saves`).
                     let host_saves = app_bridge.as_ref().map(|bridge| bridge.connect(&mut services, saves.clone(), cc.egui_ctx.clone()));
                     // //// Neoffice — a page that asks for Nora (`?nora`) gets the pane, connected with the page's own
                     // session at the page's own origin (an origin `?nora=` names only as `crate::nora_origin` allows).
@@ -103,21 +104,17 @@ pub fn start() {
                         let doc = app.session.blank_document();
                         app.session.set_document(doc);
                     }
-                    let prefs = crate::prefs::PrefsSync::new(stored);
-                    // //// Neoffice — after the preferences of an earlier visit, which would win otherwise: the hosting page
-                    // learns the editor listens and names the user who signs the comments (`?author=`; the name and
-                    // initials stored on an earlier visit, perhaps someone else's on a shared browser, are not taken),
-                    // and the Nora pane is open when the page connects Nora and closed when it doesn't (a pane left open
-                    // on a visit that had Nora would say she isn't available on one that hasn't).
-                    if let Some(bridge) = &app_bridge {
+                    let mut prefs = crate::prefs::PrefsSync::new(stored);
+                    // //// Neoffice — the name and initials stored on an earlier visit, perhaps someone else's on a shared
+                    // browser, do not sign a hosted visit (the hosting page's `?author=` below does); they stay what the
+                    // browser stores (`keep_own_author`).
+                    let own = app.session.author.clone();
+                    if app_bridge.is_some() {
                         (app.session.author, app.session.initials) = unsigned;
-                        if let Some(author) = host::Bridge::author() {
-                            app.session.author = author;
-                        }
-                        bridge.post_ready();
                     }
                     // //// Neoffice — open where the page offers Nora, unless the person closed it on an earlier visit
-                    // (remembered in the browser, nora_pane::open_as_remembered).
+                    // (remembered in the browser, nora_pane::open_as_remembered), after the stored preferences, which would
+                    // win otherwise: a pane left open on a visit that had Nora would say she isn't available on one that hasn't.
                     if let Err(e) = wordcraft_ui_egui::nora_pane::open_as_remembered(&mut app, nora.is_some()) {
                         log::error!("the Nora pane could not be set: {e}");
                     }
@@ -126,14 +123,26 @@ pub fn start() {
                     if !sample && app_bridge.is_none() {
                         app.start_screen();
                     }
+                    // The host's name for the user signs this visit's work, but isn't stored as the
+                    // browser's own preference, which a visit outside the host would restore.
+                    if app_bridge.is_some() {
+                        if let Some(author) = query_param("author") {
+                            crate::host::Bridge::set_author(&mut app, &author);
+                        }
+                        // //// Neoffice — the name that signs a hosted visit is never stored as the browser's own (even the default).
+                        prefs.keep_own_author(&app.session.author, &own);
+                    }
                     // //// Neoffice — the shell settles the hosting page's late answers (`host_saves`).
                     Ok(Box::new(WebShell { app, inbox, messages, prefs, host_saves }))
                 }),
             )
             .await;
-        // //// Neoffice — a hosting page hears that the editor could not start (no WebGPU nor WebGL2, for example).
-        if let (Err(e), Some(bridge)) = (&result, &bridge) {
-            bridge.post_failed(&format!("{e:?}"));
+        // Ready only once the runner is up: starting can still fail after the app is made.
+        if let Some(bridge) = &bridge {
+            match &result {
+                Ok(()) => bridge.post_ready(),
+                Err(e) => bridge.post_failed(&format!("{e:?}")),
+            }
         }
         if let Some(el) = document.get_element_by_id(LOADING_ID) {
             match result {
@@ -150,6 +159,10 @@ pub fn start() {
 
 fn query() -> String {
     web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
+}
+
+fn query_param(key: &str) -> Option<String> {
+    web_sys::UrlSearchParams::new_with_str(&query()).ok()?.get(key)
 }
 
 /// Wraps the app to read dropped files asynchronously (browsers can't read them synchronously)
@@ -173,30 +186,10 @@ fn stored_prefs() -> Option<String> {
 }
 
 impl eframe::App for WebShell {
+    /// Runs one browser frame: forwards queued host messages to the status bar, advances the app,
+    /// then writes changed preferences to browser storage immediately, because a reload or closed
+    /// tab never runs the exit path.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
-        // //// Neoffice — a hosting page opens the documents: a document dropped on the editor would replace the one
-        // the page gave it, so it is not taken (a picture, a font or a recipient list still is).
-        let hosted = self.app.services.host_owns_documents;
-        for f in dropped {
-            let inbox = self.inbox.clone();
-            let ctx = ctx.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped".into());
-                // //// Neoffice — a document dropped on an editor whose page opens the documents (see above).
-                if hosted && wordcraft_ui_egui::opens_as_document(&name) {
-                    log::info!("{name} was dropped on an editor whose page opens the documents: not taken");
-                    return;
-                }
-                match f.bytes_async().await {
-                    Ok(bytes) => {
-                        inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, bytes));
-                        ctx.request_repaint();
-                    }
-                    Err(e) => log::error!("couldn't read dropped file {name}: {e}"),
-                }
-            });
-        }
         let msgs = std::mem::take(&mut *self.messages.borrow_mut());
         for msg in msgs {
             self.app.status(msg);
@@ -224,11 +217,42 @@ impl eframe::App for WebShell {
         }
     }
 
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
-        self.app.raw_input_hook(raw);
+    /// Forwards this frame's raw browser input to the app before widgets run.
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        self.app.raw_input_hook(ctx, raw);
     }
 
+    /// Draws the app. On the first pass of a visible frame it takes the browser's dropped files and
+    /// spawns asynchronous byte reads into the inbox; later passes only draw.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Browser drops are input: take them only in the first real UI pass, never in a hidden
+        // `run_logic` tick that still sees the previous shown frame's RawInput.
+        if ui.ctx().current_pass_index() == 0 {
+            let ctx = ui.ctx().clone();
+            let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
+            // //// Neoffice — a hosting page opens the documents: a document dropped on the editor would replace the one
+            // the page gave it, so it is not taken (a picture, a font or a recipient list still is).
+            let hosted = self.app.services.host_owns_documents;
+            for f in dropped {
+                let inbox = self.inbox.clone();
+                let ctx = ctx.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped".into());
+                    // //// Neoffice — a document dropped on an editor whose page opens the documents (see above).
+                    if hosted && wordcraft_ui_egui::opens_as_document(&name) {
+                        log::info!("{name} was dropped on an editor whose page opens the documents: not taken");
+                        return;
+                    }
+                    match f.bytes_async().await {
+                        Ok(bytes) => {
+                            inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, bytes));
+                            ctx.request_repaint();
+                        }
+                        Err(e) => log::error!("couldn't read dropped file {name}: {e}"),
+                    }
+                });
+            }
+        }
         self.app.ui(ui);
     }
 }
@@ -510,7 +534,7 @@ fn trigger_save_file_picker(
     bytes: &[u8],
 ) -> Result<(), String> {
     let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
-    let ext = std::path::Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or("docx").to_ascii_lowercase();
+    let ext = std::path::Path::new(name).extension().and_then(std::ffi::OsStr::to_str).unwrap_or("docx").to_ascii_lowercase();
     let dot_ext = format!(".{ext}");
     let mime = mime_for(name);
 

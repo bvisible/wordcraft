@@ -215,7 +215,7 @@ pub fn top_button(app: &mut WordApp, ui: &mut Ui) {
     let open = app.ui.nora_pane;
     ui.add_space(8.0);
     let response = craft_nora_ui::launcher::button(ui, &words, open);
-    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, open, &words.label));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, open, &words.label));
     if response.clicked() && app.run("ui.nora", json!({"value": !open})).is_ok() {
         remember(!open);
     }
@@ -1598,6 +1598,8 @@ mod tests {
             ("view.readMode", json!({})),
             ("view.outline", json!({})),
             ("view.newWindow", json!({})),
+            // v0.14.0: the open documents, and the choice of the one shown.
+            ("view.switchWindows", json!({})),
             ("view.split", json!({})),
             ("view.navigationPane", json!({"value": true})),
             ("table.viewGridlines", json!({"value": false})),
@@ -1790,6 +1792,10 @@ mod tests {
         for (command, params) in [
             ("mailings.labels", json!({"text": "Nora"})),
             ("mailings.envelopes", json!({"delivery": "Nora\nSomewhere"})),
+            // v0.14.0: a merge into a new document, one printed from a new document, and a document closed by its id.
+            ("mailings.finish", json!({})),
+            ("mailings.printDocuments", json!({"from": 1})),
+            ("file.closeDocument", json!({"force": true})),
             // A comparison shown in a new document turns the one open into an untitled one, its file forgotten.
             ("review.compare", json!({"text": "Theirs", "showIn": "new"})),
             ("review.combine", json!({"text": "Theirs", "showIn": "revised"})),
@@ -1914,7 +1920,12 @@ mod tests {
         // until the new commands have been looked at against the lists above (then it is updated).
         // v0.10.0 (638): the Spike and Load System Installed Fonts are the person's; the other thirteen are Nora's or refused
         // by their family (`file.`, `view.`).
-        assert_eq!(ids.len(), 638, "WordCraft's commands changed: decide which new ones are the person's, then update this count");
+        // v0.14.0 (648): ten new, none the person's by name alone. `file.closeDocument`, `view.readPageColor`,
+        // `view.stylesPaneDock` and `view.switchWindows` are refused by their family (`file.`, `view.`);
+        // `mailings.printDocuments` makes a document of its own, which `replaces_the_document` refuses; `design.scaleFontSizes`,
+        // `equation.deleteSurrounding` and the record navigation of the mail merge (`mailings.first`, `mailings.last`,
+        // `mailings.goToRecord`, as `mailings.nextRecord` before them) are Nora's.
+        assert_eq!(ids.len(), 648, "WordCraft's commands changed: decide which new ones are the person's, then update this count");
         for entry in THE_PERSON_S {
             let known = match entry.strip_suffix('*') {
                 Some(prefix) => ids.iter().any(|id| id.starts_with(prefix)),
