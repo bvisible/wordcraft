@@ -9084,8 +9084,12 @@ fn review_language_validates_tags_and_marks_text_unchecked() {
     run(&mut s, "review.language", json!({}));
     assert_eq!(run(&mut s, "format.state", json!({}))["lang"], "en-US");
     // A language without proofing tools: no marks.
-    run(&mut s, "review.language", json!({"lang": "fr-FR"}));
+    // //// Neoffice — French has proofing tools now (the built-in dictionary): Japanese stands in for "a language without any".
+    run(&mut s, "review.language", json!({"lang": "ja-JP"}));
     assert_eq!(run(&mut s, "review.issues", json!({})), json!([]));
+    // French is proofed: an English word is not a French one.
+    run(&mut s, "review.language", json!({"lang": "fr-FR"}));
+    assert_eq!(run(&mut s, "review.issues", json!({})).as_array().map(Vec::len), Some(1));
 }
 
 /// The editing language (set by the front end from the interface language): new blank
