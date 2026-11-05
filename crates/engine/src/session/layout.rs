@@ -180,6 +180,31 @@ impl Session {
         self.cache.clear();
     }
 
+    // //// Neoffice — the document a hosting page hands over is a file, so upstream's rule for the blank document of a new session
+    // (`set_editing_language`: untitled, untouched) never reaches it; the Drive's new documents are blank files that say US English.
+    /// A blank document just opened that says nothing but the stock US English (the Drive's new document: its defaults name
+    /// `en-US`) is written in the editing language, as the blank document of a new session is: a French interface writes French from
+    /// the first word. Anything else is left as it is: a document with text, with changes, or in another language the file
+    /// chose. Not an edit: nothing to save or undo, and the file keeps its language until the person types and saves.
+    pub fn adopt_editing_language_when_blank(&mut self) {
+        let Some(tag) = self.editing_lang.clone() else { return };
+        let stock = self.doc.styles.default_chr.lang.as_deref().is_none_or(|l| l.eq_ignore_ascii_case("en-US"));
+        let blank = !self.dirty
+            && self.history.is_empty()
+            && self.redo.is_empty()
+            && self.doc.plain_text(StoryRef::Body).trim().is_empty()
+            && self.doc.paragraph_count() <= 1;
+        if !stock || !blank || self.doc.styles.default_chr.lang.as_deref() == Some(tag.as_str()) {
+            return;
+        }
+        self.doc.styles.default_chr.lang = Some(tag);
+        self.rev = self.rev.wrapping_add(1);
+        if self.made_rev == self.rev.wrapping_sub(1) {
+            self.made_rev = self.rev;
+        }
+        self.relayout();
+    }
+
     /// Set the language new documents are written in ([`Session::editing_lang`]; `None` or a
     /// malformed tag: US English). A document nobody has touched yet — untitled, unchanged, no
     /// undo steps, no text — switches too, so the blank document a session starts with follows

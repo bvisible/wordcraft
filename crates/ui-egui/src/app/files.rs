@@ -456,6 +456,8 @@ impl WordApp {
                 self.host_switch_allowed = false;
                 if opened.is_ok() {
                     self.ui.backstage = false;
+                    // //// Neoffice — the Drive's new document is a blank file in US English: a French interface gets it in French.
+                    self.session.adopt_editing_language_when_blank();
                 }
                 continue;
             }

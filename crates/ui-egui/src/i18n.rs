@@ -111,7 +111,9 @@ pub static LANGUAGES: [LangInfo; 27] = [
     LangInfo { code: "it", prefer_hans: false, editing_lang: Some("it-IT") },
     // Hungarian; `hu`, `hu-HU` and `hu_HU.UTF-8` resolve here.
     LangInfo { code: "hu", prefer_hans: false, editing_lang: None },
-    // French; `fr`, `fr-FR`, `fr_CA` and other regions resolve here.
+    // French; `fr`, `fr-FR`, `fr_CA` and other regions resolve here. No fixed editing language: new documents are written in the
+    // region's French (`Session::region_french`, `fr-CH` on a Swiss system), like Spanish.
+    // //// Neoffice — the comment above; French is proofed now, with the dictionary built into the program.
     LangInfo { code: "fr", prefer_hans: false, editing_lang: None },
     // Bulgarian; `bg`, `bg-BG` and `bg_BG.UTF-8` resolve here.
     LangInfo { code: "bg", prefer_hans: false, editing_lang: None },

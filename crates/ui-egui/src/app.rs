@@ -234,6 +234,8 @@ impl WordApp {
             Some(t) => Some(t.to_string()),
             None if lang.code() == "en" => self.session.region_english(),
             None if lang.code() == "es" => Some(self.session.region_spanish()),
+            // //// Neoffice — French is proofed now (`wordcraft_proof::fr`): a French interface writes the region's French.
+            None if lang.code() == "fr" => Some(self.session.region_french()),
             None => None,
         };
         if self.applied_editing.as_ref().is_none_or(|(l, e)| *l != lang || *e != editing) {

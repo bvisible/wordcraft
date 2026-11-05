@@ -191,6 +191,18 @@ impl Session {
             .unwrap_or_else(|| "es-ES".into())
     }
 
+    // //// Neoffice — French is proofed (`wordcraft_proof::fr`): a French interface writes new documents in the region's French.
+    /// The French of the region in effect (`fr-CH` on a Swiss system, `fr-CA` on a Canadian one; the ISO 639-2 `fra` and `fre`
+    /// count as French), or France's (`fr-FR`) when the region's language isn't French or it names no territory. A French
+    /// interface writes new documents in it, so they are proofed in the writer's French from the first word.
+    pub fn region_french(&self) -> String {
+        let r = self.region();
+        (matches!(r.language.as_str(), "fr" | "fra" | "fre") && !r.territory.is_empty())
+            .then(|| format!("fr-{}", r.territory))
+            .and_then(|t| wordcraft_proof::lang::normalize_tag(&t))
+            .unwrap_or_else(|| "fr-FR".into())
+    }
+
     /// The unit rulers and dialogs show lengths in: the user's choice, else the region's.
     pub fn units(&self) -> wordcraft_geom::Unit {
         self.prefs.units.unwrap_or_else(|| self.region().units())

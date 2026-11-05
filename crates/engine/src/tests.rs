@@ -8745,6 +8745,60 @@ fn new_documents_follow_the_regions_english() {
     assert_eq!(s.region_english(), None);
 }
 
+// //// Neoffice — French is proofed, so a French interface writes French.
+/// A French interface writes new documents in the region's French: Switzerland's on a Swiss system, France's elsewhere.
+#[test]
+fn new_documents_follow_the_regions_french() {
+    let mut s = s();
+    for (system, french) in
+        [("fr_CH.UTF-8", "fr-CH"), ("fra_BE.UTF-8", "fr-BE"), ("fr-CA", "fr-CA"), ("fr", "fr-FR"), ("en-US", "fr-FR"), ("de_CH.UTF-8", "fr-FR")]
+    {
+        s.system_region = wordcraft_geom::Region::from_tag(system);
+        assert_eq!(s.region_french(), french, "{system}");
+    }
+    s.system_region = wordcraft_geom::Region::from_tag("fr_CH.UTF-8");
+    s.set_editing_language(Some(&s.region_french()));
+    assert_eq!(s.doc.styles.default_chr.lang.as_deref(), Some("fr-CH"), "the untouched document follows");
+}
+
+// //// Neoffice — the Drive's new document is a blank file that says US English.
+/// A blank file the hosting page hands over in the stock US English follows the editing language; a document with text, a language
+/// of its own or changes never does.
+#[test]
+fn a_blank_document_in_stock_english_follows_the_editing_language_once_opened() {
+    let mut s = s();
+    s.set_editing_language(Some("fr-CH"));
+    // The Drive's blank.docx: one empty paragraph, `en-US` in its defaults.
+    let blank = |lang: Option<&str>, text: &str| {
+        let mut d = wordcraft_doc::Document::from_text(text);
+        d.styles.default_chr.lang = lang.map(str::to_string);
+        d
+    };
+    s.set_document(blank(Some("en-US"), ""));
+    s.adopt_editing_language_when_blank();
+    assert_eq!(s.doc.styles.default_chr.lang.as_deref(), Some("fr-CH"));
+    assert!(!s.dirty && !s.can_undo(), "not an edit: nothing to save or undo");
+    s.set_document(blank(None, ""));
+    s.adopt_editing_language_when_blank();
+    assert_eq!(s.doc.styles.default_chr.lang.as_deref(), Some("fr-CH"), "a file that names no language is in the stock one too");
+    // Not stock, not blank, or changed: left alone.
+    for (lang, text) in [(Some("de-DE"), ""), (Some("pl-PL"), ""), (Some("en-US"), "Hello."), (Some("en-GB"), "")] {
+        s.set_document(blank(lang, text));
+        s.adopt_editing_language_when_blank();
+        assert_eq!(s.doc.styles.default_chr.lang.as_deref(), lang, "{lang:?} {text:?}");
+    }
+    s.set_document(blank(Some("en-US"), ""));
+    run(&mut s, "text.insert", json!({"text": "x"}));
+    run(&mut s, "edit.undo", json!({}));
+    s.adopt_editing_language_when_blank();
+    assert_eq!(s.doc.styles.default_chr.lang.as_deref(), Some("en-US"), "a document that was edited keeps its language");
+    // Without an editing language (a Spanish or German interface that doesn't set one) nothing changes either.
+    s.set_document(blank(Some("en-US"), ""));
+    s.editing_lang = None;
+    s.adopt_editing_language_when_blank();
+    assert_eq!(s.doc.styles.default_chr.lang.as_deref(), Some("en-US"));
+}
+
 /// A Spanish interface writes new documents in the region's Spanish (#3360): Uruguay's on a
 /// Uruguayan system, Mexico's on a Mexican one, Spain's elsewhere.
 #[test]
