@@ -145,7 +145,8 @@ mod tests {
         for w in ["caffè", "perché", "xqzv", ""] {
             assert!(is_correct_with(&none, w), "{w}");
         }
-        assert!(install_dictionary("FLAG long\n", "1\nkot\n").is_err(), "unsupported files are refused");
+        // //// Neoffice — `FLAG long` is supported now; `COMPOUNDFLAG` is still refused.
+        assert!(install_dictionary("COMPOUNDFLAG X\n", "1\nkot\n").is_err(), "unsupported files are refused");
     }
 
     #[test]

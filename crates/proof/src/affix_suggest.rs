@@ -304,6 +304,8 @@ pub(crate) fn suggest_in(d: &AffixDict, word: &str, max: usize, t: &Tuning) -> V
         };
         // A KEEPCASE word only exists in its dictionary case: `Km` would be flagged, so offer `km`.
         let t = if recased != text && text.split(' ').any(|p| d.case_locked(p)) { text } else { recased };
+        // //// Neoffice — a suggestion is shown through the dictionary's `OCONV` table (French: typographic apostrophes).
+        let t = d.convert_output(&t).into_owned();
         if t != word && !out.contains(&t) {
             out.push(t);
         }
@@ -509,6 +511,16 @@ mod tests {
         col.offer("cafe", COST_REP);
         col.offer("cafe", COST_SCAN);
         assert_eq!(col.found.get("cafe").map(|e| e.0), Some(COST_REP));
+    }
+
+    // //// Neoffice — `OCONV` shapes the suggestions shown (the French dictionary asks for typographic apostrophes).
+    #[test]
+    fn suggestions_go_through_the_output_conversion() {
+        let aff = "SET UTF-8\nICONV 1\nICONV ’ '\nOCONV 1\nOCONV ' ’\nMAP 1\nMAP eé\n";
+        let d = AffixDict::from_hunspell(aff, "2\nl'été\nqu'il\n", &[]).unwrap();
+        assert_eq!(suggest_in(&d, "l'eté", 4, &Tuning::DEFAULT).first().map(String::as_str), Some("l’été"));
+        assert_eq!(suggest_in(&d, "qu'ill", 4, &Tuning::DEFAULT).first().map(String::as_str), Some("qu’il"));
+        assert!(d.check("l’été"), "what is shown is accepted");
     }
 
     #[test]

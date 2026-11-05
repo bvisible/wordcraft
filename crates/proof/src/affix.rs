@@ -12,18 +12,26 @@
 //! lines and the stems front-coded, raw-deflated together (the Polish dictionary is under 1 MB).
 //!
 //! Supported: one-character flags (at most 256 distinct, any Unicode character — `FLAG UTF-8`),
-//! flag aliases (`AF`: a number standing for a set of flags), `PFX`/`SFX` with strip, append and
-//! condition (`.`, letters, `[abc]`, `[^abc]`), cross products, continuation classes on suffixes
-//! (at most two suffixes in a row, as in Hunspell), `FORBIDDENWORD`, `NOSUGGEST`, `KEEPCASE` (the
-//! stem is a word only in its own letter case), input conversion (`ICONV`: ligatures such as `ﬁ`
-//! read as `fi`) and ignored characters (`IGNORE`), and the suggestion tables `TRY`, `KEY`, `MAP`
-//! and `REP`.
+//! flags of two characters (`FLAG long`), flag aliases (`AF`: a number standing for a set of flags),
+//! `PFX`/`SFX` with strip, append and condition (`.`, letters, `[abc]`, `[^abc]`), cross products,
+//! continuation classes on suffixes (at most two suffixes in a row, as in Hunspell), rules that
+//! strip a whole stem (`FULLSTRIP`), `FORBIDDENWORD`, `NOSUGGEST`, `KEEPCASE` (the stem is a word
+//! only in its own letter case), `NEEDAFFIX` on stems (a word only with an affix), input
+//! conversion (`ICONV`: ligatures such as `ﬁ` read as `fi`) and ignored characters (`IGNORE`),
+//! words that break at given strings into correct parts (`BREAK`: `est-ce`), and the suggestion
+//! tables `TRY`, `KEY`, `MAP` and `REP` and output conversion (`OCONV`, applied to suggestions only).
 //! Morphological data (`AM` aliases, the fields after a stem) is skipped. Rejected: compounding,
-//! long or numeric flags, `NEEDAFFIX` and the other directives that change which words are correct.
+//! numeric flags (`FLAG num`), `CIRCUMFIX` and `NEEDAFFIX` on an affix where they are used, and the other
+//! directives that change which words are correct.
+// //// Neoffice — the module docs listed `FLAG long`, `FULLSTRIP`, `NEEDAFFIX`, `CIRCUMFIX`, `OCONV` as rejected and
+// said nothing of `BREAK`; the French dictionary (Grammalecte) needs all of them, so they are read (or refused only
+// where they would change the answer). Candidate for the same change upstream (ticket #5180 for `FLAG long`).
 //!
 //! Lookups never panic: stems sit in one string, found through an open-addressing hash table, and
 //! a probe allocates only small scratch strings for the candidate roots it tries.
 
+// //// Neoffice — Cow: the flag reader and `convert_output` borrow when nothing changes.
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::hash::Hasher;
 
@@ -37,8 +45,8 @@ const EMPTY: u32 = u32::MAX;
 
 /// Directives that change which words are correct in ways this engine doesn't implement.
 const UNSUPPORTED: &[&str] = &[
+    // //// Neoffice — `CIRCUMFIX`, `FULLSTRIP`, `NEEDAFFIX` and `OCONV` are no longer refused outright: see `parse_aff`.
     "CHECKSHARPS",
-    "CIRCUMFIX",
     "COMPLEXPREFIXES",
     "COMPOUNDBEGIN",
     "COMPOUNDEND",
@@ -48,10 +56,8 @@ const UNSUPPORTED: &[&str] = &[
     "COMPOUNDMIDDLE",
     "COMPOUNDMIN",
     "COMPOUNDPERMITFLAG",
+    // //// Neoffice — FULLSTRIP, NEEDAFFIX and OCONV left this list; CIRCUMFIX is refused in `build`, where its flag is used.
     "COMPOUNDRULE",
-    "FULLSTRIP",
-    "NEEDAFFIX",
-    "OCONV",
     "ONLYINCOMPOUND",
     "PSEUDOROOT",
 ];
@@ -185,6 +191,9 @@ fn parse_cond(text: &str) -> Result<Box<[Cond]>, String> {
 const MAX_CHAIN: u8 = 2;
 /// How many suffixes may sit under the outermost one: the depth `form_has_flag` walks.
 const INNER_CHAIN: u8 = MAX_CHAIN - 1;
+/// Most breaks a [`AffixDict::check`] tries on one word (`BREAK`); a word with more hyphens than that is not answered by its parts.
+// //// Neoffice — added with `BREAK`.
+const MAX_BREAKS: u32 = 32;
 /// Most forms [`AffixDict::forms`] lists for one stem (real stems have a few hundred at most).
 pub const MAX_FORMS: usize = 4096;
 /// Most rules [`AffixDict::forms`] tries along continuation chains and prefix–suffix cross
@@ -270,6 +279,21 @@ pub struct AffixDict {
     ignore: Box<[char]>,
     /// Provenance and licence lines, kept through [`AffixDict::to_bytes`].
     comments: Vec<String>,
+    // //// Neoffice — the fields below carry the directives upstream's engine refused (`FULLSTRIP`, `NEEDAFFIX`, `OCONV`)
+    // or skipped (`BREAK`), which the French dictionary needs.
+    /// `FULLSTRIP`: a rule may remove the whole stem (French `être` → `sont`); without it the stem must stay longer
+    /// than what the rule strips, as in Hunspell.
+    fullstrip: bool,
+    /// The `NEEDAFFIX` flag's bit: such stems are words only with an affix (0: none).
+    needaffix: Mask,
+    /// `OCONV`: output conversions applied to the suggestions shown, `(from, to)`.
+    oconv: Vec<(String, String)>,
+    /// `BREAK ^x`: `x` may be taken off the start of a word, the rest being checked.
+    break_start: Vec<String>,
+    /// `BREAK x$`: `x` may be taken off the end of a word.
+    break_end: Vec<String>,
+    /// `BREAK x` elsewhere: a word may break at `x` into two parts that are both correct (`-` in `est-ce`).
+    break_inner: Vec<String>,
 }
 
 fn hash_str(s: &str) -> u64 {
@@ -346,7 +370,25 @@ struct Rules {
     /// The `AF` table opened with its count line, so flag fields are alias numbers. A table
     /// without one is rejected, as in Hunspell: its lines are ignored.
     aliases_on: bool,
+    // //// Neoffice — `FLAG long` and the directives upstream's engine refused: see the module docs.
+    /// `FLAG long`: flags are pairs of characters.
+    long_flags: bool,
+    /// The private-use character each pair of a `FLAG long` dictionary stands for inside the engine, whose flags are
+    /// one character each.
+    long_ids: HashMap<(char, char), char>,
+    fullstrip: bool,
+    needaffix: Option<char>,
+    circumfix: Option<char>,
+    oconv: Vec<(String, String)>,
+    /// The `BREAK` strings as written (`-`, `^'`, `'$`).
+    breaks: Vec<String>,
 }
+
+// //// Neoffice — the private-use range that stands for the pairs of a FLAG long dictionary.
+/// The first of the private-use characters that stand for the pairs of a `FLAG long` dictionary.
+const LONG_FLAG_BASE: u32 = 0xE000;
+/// The last one (U+F8FF ends the Private Use Area).
+const LONG_FLAG_LAST: u32 = 0xF8FF;
 
 impl Rules {
     /// Flags as written in a `.dic` entry or a continuation class: the flag characters
@@ -364,6 +406,61 @@ impl Rules {
             .and_then(|n| n.checked_sub(1))
             .and_then(|i| self.aliases.get(i))
             .map_or("", String::as_str)
+    }
+
+    // //// Neoffice — `FLAG long`: the engine's flags are one character each, so a pair is given a private-use character
+    // the first time it is seen (in the rules, then in the `.dic`) and every later one is that character.
+    /// The character standing for the long flag `pair`.
+    fn long_flag(&mut self, pair: (char, char)) -> Result<char, String> {
+        if let Some(&c) = self.long_ids.get(&pair) {
+            return Ok(c);
+        }
+        let next = u32::try_from(self.long_ids.len()).unwrap_or(u32::MAX);
+        let c = LONG_FLAG_BASE.checked_add(next).filter(|&c| c <= LONG_FLAG_LAST).and_then(char::from_u32);
+        let c = c.ok_or_else(|| format!("more than {MAX_FLAGS} distinct flags are not supported"))?;
+        self.long_ids.insert(pair, c);
+        Ok(c)
+    }
+
+    /// The flags of a `.dic` entry or a continuation class as the engine's one-character flags: the alias they number
+    /// (`AF`), and with `FLAG long` each pair as its private character. A lone trailing character of a long flag list
+    /// is dropped, as Hunspell does, unless `strict` (the rules of the `.aff`) makes it an error.
+    fn read_flags<'a>(&mut self, written: &'a str, strict: bool) -> Result<Cow<'a, str>, String> {
+        if !self.long_flags {
+            return Ok(if self.aliases_on { Cow::Owned(self.flags(written).to_string()) } else { Cow::Borrowed(written) });
+        }
+        let chars: Vec<char> = self.flags(written).chars().filter(|&c| c != EMOJI_SELECTOR).collect();
+        if strict && chars.len() % 2 == 1 {
+            return Err(format!("flags `{written}` are not pairs of characters (FLAG long)"));
+        }
+        let mut out = String::with_capacity(chars.len());
+        for &[a, b] in chars.as_chunks::<2>().0 {
+            out.push(self.long_flag((a, b))?);
+        }
+        Ok(Cow::Owned(out))
+    }
+
+    /// The one flag a directive (`KEEPCASE ||`) names: a character, or a pair with `FLAG long`.
+    fn named_flag(&mut self, arg: &str, dir: &str, n: usize) -> Result<char, String> {
+        if !self.long_flags {
+            return one_flag(arg, dir, n);
+        }
+        let chars: Vec<char> = arg.chars().filter(|&c| c != EMOJI_SELECTOR).collect();
+        match chars.as_slice() {
+            &[a, b] if !matches!(a, ' ' | '\t') && !matches!(b, ' ' | '\t') => self.long_flag((a, b)),
+            _ => Err(format!("line {}: {dir} needs one flag of two characters (FLAG long)", n + 1)),
+        }
+    }
+
+    /// The flag a `PFX` or `SFX` header and its rules name: one character, or a pair with `FLAG long`.
+    fn rule_flag(&mut self, arg: &str) -> Result<char, String> {
+        let chars: Vec<char> = arg.chars().filter(|&c| c != EMOJI_SELECTOR).collect();
+        match (self.long_flags, chars.as_slice()) {
+            (false, &[c]) => Ok(c),
+            (true, &[a, b]) => self.long_flag((a, b)),
+            (false, _) => Err(format!("flag `{arg}` is not one character")),
+            (true, _) => Err(format!("flag `{arg}` is not two characters (FLAG long)")),
+        }
     }
 
     /// `w` without the `IGNORE` characters.
@@ -424,12 +521,20 @@ const EMOJI_SELECTOR: char = '\u{fe0f}';
 
 /// Read Hunspell `.aff` text (already decoded to UTF-8).
 fn parse_aff(aff: &str) -> Result<Rules, String> {
-    let mut r = Rules::default();
+    // //// Neoffice — `FLAG long` decides how every flag below is read, wherever the line stands in the file.
+    let long_flags = aff.lines().any(|l| {
+        let mut f = split_fields(l);
+        f.next() == Some("FLAG") && f.next().is_some_and(|m| m.eq_ignore_ascii_case("long"))
+    });
+    let mut r = Rules { long_flags, ..Rules::default() };
     let mut cross: HashMap<(bool, char), bool> = HashMap::new();
     let mut map_header = false;
     let mut rep_header = false;
     let mut af_header = false;
     let mut iconv_header = false;
+    // //// Neoffice — headers of the OCONV and BREAK tables, whose first line is a count, as ICONV's.
+    let mut oconv_header = false;
+    let mut break_header = false;
     for (n, line) in aff.lines().enumerate() {
         let f: Vec<&str> = split_fields(line).collect();
         let Some(&dir) = f.first() else { continue };
@@ -443,7 +548,8 @@ fn parse_aff(aff: &str) -> Result<Rules, String> {
             // Morphological aliases, and a flag that only matters for morphological generation:
             // the words it marks are correct.
             "AM" | "LEMMA_PRESENT" => {}
-            "SUBSTANDARD" => r.substandard = Some(one_flag(at(1), dir, n)?),
+            // //// Neoffice — the directives that name a flag go through `named_flag` (a pair under `FLAG long`).
+            "SUBSTANDARD" => r.substandard = Some(r.named_flag(at(1), dir, n)?),
             // The first `AF` or `ICONV` line is the table's count, as in Hunspell, even with a
             // trailing comment (`AF 1559 # aliases`).
             "AF" => {
@@ -463,15 +569,38 @@ fn parse_aff(aff: &str) -> Result<Rules, String> {
                 }
             }
             "IGNORE" => r.ignore = at(1).chars().collect(),
-            "KEEPCASE" => r.keepcase = Some(one_flag(at(1), dir, n)?),
+            // //// Neoffice — the directives that name a flag go through `named_flag` (a pair under FLAG long).
+            "KEEPCASE" => r.keepcase = Some(r.named_flag(at(1), dir, n)?),
             // Per-character flag modes (`FLAG UTF-8`, as VERO's pt_BR dictionary uses) work
             // with the one-character parsing here; only the multi-character encodings differ.
-            "FLAG" if !matches!(at(1), "UTF-8" | "DEFAULT" | "utf-8" | "default" | "UTF8" | "") => {
-                return Err(format!("line {}: FLAG {} is not supported (one-character flags only)", n + 1, at(1)));
+            // //// Neoffice — `FLAG long` is read (see `Rules::long_flag`); `FLAG num` still is not.
+            "FLAG" if !matches!(at(1), "UTF-8" | "DEFAULT" | "utf-8" | "default" | "UTF8" | "") && !at(1).eq_ignore_ascii_case("long") => {
+                return Err(format!("line {}: FLAG {} is not supported (one- and two-character flags only)", n + 1, at(1)));
             }
             "FLAG" => {}
-            "FORBIDDENWORD" => r.forbidden = Some(one_flag(at(1), dir, n)?),
-            "NOSUGGEST" => r.no_suggest = Some(one_flag(at(1), dir, n)?),
+            "FORBIDDENWORD" => r.forbidden = Some(r.named_flag(at(1), dir, n)?),
+            "NOSUGGEST" => r.no_suggest = Some(r.named_flag(at(1), dir, n)?),
+            // //// Neoffice — read, not refused. `NEEDAFFIX` is applied to stems; on an affix, and `CIRCUMFIX` where
+            // its flag is used, it would change which words are correct in ways this engine doesn't implement, so
+            // `AffixDict::build` refuses those dictionaries instead of ignoring the directive.
+            "FULLSTRIP" => r.fullstrip = true,
+            "NEEDAFFIX" => r.needaffix = Some(r.named_flag(at(1), dir, n)?),
+            "CIRCUMFIX" => r.circumfix = Some(r.named_flag(at(1), dir, n)?),
+            "OCONV" => {
+                if !oconv_header && at(1).parse::<usize>().is_ok() {
+                    oconv_header = true;
+                } else if f.len() >= 3 {
+                    r.oconv.push((at(1).to_string(), at(2).to_string()));
+                }
+            }
+            // The first `BREAK` line is the count (`BREAK 0` breaks nowhere), the others the strings.
+            "BREAK" => {
+                if !break_header && at(1).parse::<usize>().is_ok() {
+                    break_header = true;
+                } else if !at(1).is_empty() && !at(1).starts_with('#') {
+                    r.breaks.push(at(1).to_string());
+                }
+            }
             "TRY" => r.try_chars = cap_try(at(1)),
             "KEY" => r.key = at(1).to_string(),
             "MAP" => {
@@ -490,10 +619,8 @@ fn parse_aff(aff: &str) -> Result<Rules, String> {
             }
             "PFX" | "SFX" => {
                 let suffix = dir == "SFX";
-                let mut flag_chars = at(1).chars().filter(|&c| c != EMOJI_SELECTOR);
-                let (Some(flag), None) = (flag_chars.next(), flag_chars.next()) else {
-                    return Err(format!("line {}: flag `{}` is not one character", n + 1, at(1)));
-                };
+                // //// Neoffice — `rule_flag` reads a pair under `FLAG long`; the one-character error is unchanged.
+                let flag = r.rule_flag(at(1)).map_err(|e| format!("line {}: {e}", n + 1))?;
                 // Only a header ignores trailing fields; a rule condition beginning with # is literal.
                 let is_header = f.len() >= 4 && matches!(at(2), "Y" | "N") && at(3).parse::<usize>().is_ok() && !cross.contains_key(&(suffix, flag));
                 if is_header {
@@ -525,15 +652,19 @@ fn parse_aff(aff: &str) -> Result<Rules, String> {
     // Aliases may be declared after the rules that use them; resolve once all are read.
     // Hunspell removes `IGNORE` characters from the appended text only: a stripped text that
     // holds one never matches a stem (stems lose them too), so the rule never applies.
-    let resolve = |rules: &mut Vec<RawRule>, r: &Rules| {
+    // //// Neoffice — the continuation classes go through `read_flags` (a pair per flag under `FLAG long`), which can fail.
+    let resolve = |rules: &mut Vec<RawRule>, r: &mut Rules| -> Result<(), String> {
         for rule in rules.iter_mut() {
-            rule.4 = r.flags(&rule.4).to_string();
+            rule.4 = r.read_flags(&rule.4, true)?.into_owned();
             rule.3 = r.strip_ignored(&rule.3);
         }
+        // //// Neoffice — continuation classes go through `read_flags`, which reads pairs under FLAG long.
+        Ok(())
     };
     let (mut pfx, mut sfx) = (std::mem::take(&mut r.prefixes), std::mem::take(&mut r.suffixes));
-    resolve(&mut pfx, &r);
-    resolve(&mut sfx, &r);
+    // //// Neoffice — resolving the continuation classes can fail now (a long flag that is not a pair).
+    resolve(&mut pfx, &mut r)?;
+    resolve(&mut sfx, &mut r)?;
     (r.prefixes, r.suffixes) = (pfx, sfx);
     Ok(r)
 }
@@ -546,7 +677,8 @@ impl AffixDict {
         // directive or turn the `.dic` count line into a stem.
         let aff = aff.strip_prefix('\u{feff}').unwrap_or(aff);
         let dic = dic.strip_prefix('\u{feff}').unwrap_or(dic);
-        let rules = parse_aff(aff)?;
+        // //// Neoffice — mutable: FLAG long gives each pair of flags a private character as the rules and the .dic are read.
+        let mut rules = parse_aff(aff)?;
         let mut stems: Vec<(String, String)> = Vec::new();
         for (n, line) in dic.lines().enumerate() {
             // The entry may hold spaces (`ad hoc/B\tpo:adv`); it ends where Hunspell ends it.
@@ -581,7 +713,8 @@ impl AffixDict {
             if word.is_empty() || word.len() > MAX_WORD_BYTES || word.contains(['\n', '/']) {
                 continue;
             }
-            let flags = rules.flags(&flags).to_string();
+            // //// Neoffice — `read_flags` reads the pairs of a `FLAG long` dictionary.
+            let flags = rules.read_flags(&flags, false)?.into_owned();
             stems.push((word, flags));
         }
         AffixDict::build(rules, stems, comments.iter().map(ToString::to_string).collect())
@@ -595,6 +728,16 @@ impl AffixDict {
         flag_chars.dedup();
         if flag_chars.len() > MAX_FLAGS {
             return Err(format!("{} distinct flags; at most {MAX_FLAGS} are supported", flag_chars.len()));
+        }
+        // //// Neoffice — `CIRCUMFIX` (anywhere its flag is used) and `NEEDAFFIX` on an affix change which words are
+        // correct and are not implemented: refused, never ignored. Unused (the French dictionary declares `CIRCUMFIX **`
+        // and no entry or rule carries it), `CIRCUMFIX` changes nothing and the dictionary loads.
+        let on_affix = |c: char| rules.prefixes.iter().chain(&rules.suffixes).any(|r| r.0 == c || r.4.contains(c));
+        if let Some(c) = rules.circumfix.filter(|&c| on_affix(c) || stems.iter().any(|s| s.1.contains(c))) {
+            return Err(format!("CIRCUMFIX is not supported (the dictionary uses its flag {c:?})"));
+        }
+        if rules.needaffix.is_some_and(|c| rules.prefixes.iter().chain(&rules.suffixes).any(|r| r.4.contains(c))) {
+            return Err("NEEDAFFIX on an affix (a form that needs a second affix) is not supported".into());
         }
         let bit_of = |c: char| flag_chars.iter().position(|&x| x == c).map_or(Mask::EMPTY, Mask::bit);
         let forbidden = rules.forbidden.map_or(Mask::EMPTY, bit_of);
@@ -616,8 +759,21 @@ impl AffixDict {
             map: rules.map,
             rep: rules.rep,
             comments,
+            // //// Neoffice — `FULLSTRIP`, `NEEDAFFIX`, `OCONV` and `BREAK` (see the fields).
+            fullstrip: rules.fullstrip,
+            needaffix: rules.needaffix.map_or(Mask::EMPTY, bit_of),
+            oconv: rules.oconv,
             ..AffixDict::default()
         };
+        // //// Neoffice — the BREAK strings, sorted into those that strip a start, an end, or split the word.
+        for b in &rules.breaks {
+            // `^x` strips `x` from the start, `x$` from the end; a lone `^` or `$` is a break string of its own.
+            match (b.strip_prefix('^'), b.strip_suffix('$')) {
+                (Some(x), _) if !x.is_empty() => d.break_start.push(x.to_string()),
+                (_, Some(x)) if !x.is_empty() => d.break_end.push(x.to_string()),
+                _ => d.break_inner.push(b.clone()),
+            }
+        }
         d.offs.push(0);
         let mut set_ids: HashMap<Mask, u16> = HashMap::new();
         let mut i = 0;
@@ -793,7 +949,8 @@ impl AffixDict {
             return false;
         }
         let mut root = String::with_capacity(w.len() + 8);
-        let cuts = std::iter::once(w.len()).chain(w.char_indices().rev().map(|(i, _)| i).filter(|&i| i > 0));
+        // //// Neoffice — with `FULLSTRIP` the appended string may be the whole word (`sont` from `être`).
+        let cuts = std::iter::once(w.len()).chain(w.char_indices().rev().map(|(i, _)| i).filter(|&i| i > 0 || self.fullstrip));
         for b in cuts.take(self.max_sfx_chars + 1) {
             let (Some(base), Some(add)) = (w.get(..b), w.get(b..)) else { continue };
             let Some(groups) = self.sfx_index.get(add) else { continue };
@@ -863,13 +1020,15 @@ impl AffixDict {
         if w.is_empty() || w.len() > MAX_WORD_BYTES {
             return false;
         }
-        if self.stem_flags_except(w, deny).is_some() || self.suffixed(w, Mask::EMPTY, deny) {
+        // //// Neoffice — a stem carrying the `NEEDAFFIX` flag is a word only with an affix, so not as itself.
+        if self.stem_flags_except(w, deny | self.needaffix).is_some() || self.suffixed(w, Mask::EMPTY, Mask::EMPTY, deny) {
             return true;
         }
         let mut root = String::with_capacity(w.len() + 8);
         for r in &self.prefixes {
             let Some(rest) = w.strip_prefix(&*r.add) else { continue };
-            if rest.is_empty() {
+            // //// Neoffice — a `FULLSTRIP` dictionary lets a prefix rule replace the whole stem too.
+            if rest.is_empty() && !self.fullstrip {
                 continue;
             }
             root.clear();
@@ -884,7 +1043,9 @@ impl AffixDict {
             if self.form_has_flag(&root, r.bit, INNER_CHAIN, deny) {
                 return true;
             }
-            if r.cross && self.suffixed(&root, r.bit, deny) {
+            // //// Neoffice — the prefix's continuation classes license suffixes on the prefixed stem (French `PFX Um 0 0/S.`:
+            // `watt` + no-op prefix + plural `s`); upstream's engine read them only as flags of further prefixes' suffixes.
+            if r.cross && self.suffixed(&root, r.bit, r.cont, deny) {
                 return true;
             }
         }
@@ -892,12 +1053,15 @@ impl AffixDict {
     }
 
     /// Is `w` a stem with one suffix? With `need` set (a prefix was taken off), the stem must
-    /// carry those flags too and the suffix must allow cross products.
-    fn suffixed(&self, w: &str, need: Mask, deny: Mask) -> bool {
+    // //// Neoffice — documents `extra`, the continuation classes of the prefix taken off.
+    /// carry those flags too and the suffix must allow cross products; `extra` is what that prefix's
+    /// continuation classes add to the stem's own flags.
+    fn suffixed(&self, w: &str, need: Mask, extra: Mask, deny: Mask) -> bool {
         let mut root = String::with_capacity(w.len() + 8);
         // Each split point from the end: the appended string is `w[b..]`, at most the longest
         // suffix, and something must stay before it.
-        let cuts = std::iter::once(w.len()).chain(w.char_indices().rev().map(|(i, _)| i).filter(|&i| i > 0));
+        // //// Neoffice — unless the dictionary says `FULLSTRIP`: the rule then replaces the whole stem.
+        let cuts = std::iter::once(w.len()).chain(w.char_indices().rev().map(|(i, _)| i).filter(|&i| i > 0 || self.fullstrip));
         for b in cuts.take(self.max_sfx_chars + 1) {
             let (Some(base), Some(add)) = (w.get(..b), w.get(b..)) else { continue };
             let Some(groups) = self.sfx_index.get(add) else { continue };
@@ -910,7 +1074,8 @@ impl AffixDict {
                 // when a cross product is being checked).
                 if let Some(f) = self.stem_flags_except(&root, deny)
                     && f.covers(need)
-                    && rules().any(|r| f.meets(r.bit) && (need.is_empty() || r.cross) && r.cond_matches(&root, true))
+                    // //// Neoffice — the flags a prefix passes down (`extra`) license the suffix as the stem's own do.
+                    && rules().any(|r| (f | extra).meets(r.bit) && (need.is_empty() || r.cross) && r.cond_matches(&root, true))
                 {
                     return true;
                 }
@@ -949,18 +1114,110 @@ impl AffixDict {
 
     fn check_except(&self, w: &str, deny: Mask) -> bool {
         let w = self.normalize(w);
-        if self.contains_except(&w, deny) {
+        // //// Neoffice — a word that is not a dictionary word as a whole may break at a `BREAK` string into correct parts.
+        let mut budget = MAX_BREAKS;
+        self.check_parts(&w, deny, &mut budget)
+    }
+
+    /// `w` (already through `ICONV` and `IGNORE`) as written or in another letter case: the check [`AffixDict::check`] was
+    /// before `BREAK`.
+    fn check_whole(&self, w: &str, deny: Mask) -> bool {
+        if self.contains_except(w, deny) {
             return true;
         }
         let deny = deny | self.keepcase;
-        match casing(&w) {
+        // //// Neoffice — `check_whole` is the check as it was before BREAK; its word is already through ICONV and IGNORE.
+        match casing(w) {
             Casing::Lower | Casing::Mixed => false,
             Casing::Initial => self.contains_except(&w.to_lowercase(), deny),
             Casing::Upper => {
                 let lower = w.to_lowercase();
-                self.contains_except(&capitalize(&lower), deny) || self.contains_except(&lower, deny)
+                self.contains_except(&capitalize(&lower), deny) || self.contains_except(&lower, deny) || self.capitals_after_apostrophe(&lower, deny)
             }
         }
+    }
+
+    // //// Neoffice — added: Hunspell reads a word in capitals that holds an apostrophe (`L'ALLEMAGNE`) as `L'Allemagne` or `l'Allemagne`,
+    // the elided article in front of a proper noun; upstream's engine tried only the word as a whole in lower case or capitalized.
+    /// Is the lower-case `lower` (`l'allemagne`) a word once its first letter and the one after its apostrophe are capitals, or only the latter?
+    fn capitals_after_apostrophe(&self, lower: &str, deny: Mask) -> bool {
+        let Some((head, tail)) = lower.split_once('\'') else { return false };
+        if head.is_empty() || tail.is_empty() {
+            return false;
+        }
+        let tail = capitalize(tail);
+        self.contains_except(&format!("{}'{tail}", capitalize(head)), deny) || self.contains_except(&format!("{head}'{tail}"), deny)
+    }
+
+    // //// Neoffice — added: Hunspell's `BREAK`. Absent from the `.aff`, nothing breaks (Hunspell would break at hyphens, but
+    // the languages that read a dictionary here handle hyphens themselves and must not change).
+    /// [`AffixDict::check_whole`], else — when the dictionary declares break strings — the word broken at one of them:
+    /// `^x` and `x$` take `x` off the start or the end of the word and check the rest; any other string splits the word
+    /// at its first occurrence (not at the very start or end) into two parts that must both be correct, each broken again
+    /// the same way. `budget` bounds the breaks tried, so a word of thousands of hyphens costs a few dictionary lookups.
+    fn check_parts(&self, w: &str, deny: Mask, budget: &mut u32) -> bool {
+        if self.check_whole(w, deny) {
+            return true;
+        }
+        if (self.break_start.is_empty() && self.break_end.is_empty() && self.break_inner.is_empty()) || *budget == 0 {
+            return false;
+        }
+        *budget -= 1;
+        for p in &self.break_start {
+            if let Some(rest) = w.strip_prefix(p.as_str())
+                && !rest.is_empty()
+                && self.check_parts(rest, deny, budget)
+            {
+                return true;
+            }
+        }
+        for p in &self.break_end {
+            if let Some(rest) = w.strip_suffix(p.as_str())
+                && !rest.is_empty()
+                && self.check_parts(rest, deny, budget)
+            {
+                return true;
+            }
+        }
+        for p in &self.break_inner {
+            if let Some(at) = w.find(p.as_str())
+                && at > 0
+                && at + p.len() < w.len()
+                && let (Some(first), Some(rest)) = (w.get(..at), w.get(at + p.len()..))
+                && self.check_parts(rest, deny, budget)
+                && self.check_parts(first, deny, budget)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    // //// Neoffice — added: Hunspell's `OCONV`, for the suggestions shown (it never changes what is correct).
+    /// `w` through the dictionary's `OCONV` table (at each position the longest match wins), as a suggestion is shown.
+    pub fn convert_output<'a>(&self, w: &'a str) -> Cow<'a, str> {
+        if self.oconv.is_empty() {
+            return Cow::Borrowed(w);
+        }
+        let mut out: Option<String> = None;
+        let mut rest = w;
+        while let Some(c) = rest.chars().next() {
+            let done = w.get(..w.len() - rest.len()).unwrap_or_default();
+            let hit = self.oconv.iter().filter(|(from, _)| !from.is_empty() && rest.starts_with(from.as_str())).max_by_key(|(from, _)| from.len());
+            match hit {
+                Some((from, to)) => {
+                    out.get_or_insert_with(|| done.to_string()).push_str(to);
+                    rest = rest.get(from.len()..).unwrap_or_default();
+                }
+                None => {
+                    if let Some(o) = out.as_mut() {
+                        o.push(c);
+                    }
+                    rest = rest.get(c.len_utf8()..).unwrap_or_default();
+                }
+            }
+        }
+        out.map_or(Cow::Borrowed(w), Cow::Owned)
     }
 
     /// Every form of the stem `stem` (itself included), unsorted, possibly with repeats; at most
@@ -969,7 +1226,9 @@ impl AffixDict {
     /// cost millions of strings (#3613).
     pub fn forms(&self, stem: &str) -> Vec<String> {
         let Some(f) = self.stem_flags(stem) else { return Vec::new() };
-        let mut out = vec![stem.to_string()];
+        // //// Neoffice — a `NEEDAFFIX` stem is not one of its own forms, and a rule that would strip the whole stem
+        // applies only under `FULLSTRIP`: the same two answers [`AffixDict::contains`] gives.
+        let mut out = if f.meets(self.needaffix) { Vec::new() } else { vec![stem.to_string()] };
         let mut cross_sfx = Vec::new();
         // Suffix forms queued with the continuation classes they carry, for chained expansion;
         // each (form, classes) pair is expanded once.
@@ -981,6 +1240,10 @@ impl AffixDict {
                 continue;
             }
             let Some(base) = stem.strip_suffix(&*r.strip) else { continue };
+            // //// Neoffice — a suffix rule strips the whole stem only under FULLSTRIP, as in the checker (`suffixed`).
+            if base.is_empty() && !self.fullstrip {
+                continue;
+            }
             let form = format!("{base}{}", r.add);
             if r.cross {
                 cross_sfx.push(form.clone());
@@ -1010,6 +1273,10 @@ impl AffixDict {
                         continue;
                     }
                     let Some(base) = form.strip_suffix(&*r.strip) else { continue };
+                    // //// Neoffice — a suffix rule strips the whole stem only under FULLSTRIP, as in the checker (`suffixed`).
+                    if base.is_empty() && !self.fullstrip {
+                        continue;
+                    }
                     let next = format!("{base}{}", r.add);
                     if !r.cont.is_empty() && queued.insert((next.clone(), r.cont)) {
                         chain.push((next.clone(), r.cont));
@@ -1026,14 +1293,40 @@ impl AffixDict {
                 continue;
             }
             let Some(rest) = stem.strip_prefix(&*r.strip) else { continue };
+            // //// Neoffice — a prefix rule strips the whole stem only under FULLSTRIP, as in the checker (`contains_except`).
+            if rest.is_empty() && !self.fullstrip {
+                continue;
+            }
             out.push(format!("{}{rest}", r.add));
+            // //// Neoffice — the suffixes the prefix's continuation classes license (see `contains_except`).
+            if r.cross && !r.cont.is_empty() {
+                for i in self.suffixes_with(r.cont) {
+                    let Some(s) = self.suffixes.get(i as usize) else { continue };
+                    let Some(base) = stem.strip_suffix(&*s.strip) else { continue };
+                    if !s.cross || !s.cond_matches(stem, true) || (base.is_empty() && !self.fullstrip) {
+                        continue;
+                    }
+                    work += 1;
+                    if out.len() >= MAX_FORMS || work > MAX_FORMS_WORK {
+                        return out;
+                    }
+                    if let Some(rest) = format!("{base}{}", s.add).strip_prefix(&*r.strip)
+                        && (!rest.is_empty() || self.fullstrip)
+                    {
+                        out.push(format!("{}{rest}", r.add));
+                    }
+                }
+            }
             if r.cross {
                 for s in &cross_sfx {
                     work += 1;
                     if out.len() >= MAX_FORMS || work > MAX_FORMS_WORK {
                         return out;
                     }
-                    if let Some(rest) = s.strip_prefix(&*r.strip) {
+                    // //// Neoffice — a prefix rule that would replace the whole stem applies only under FULLSTRIP, as in the checker.
+                    if let Some(rest) = s.strip_prefix(&*r.strip)
+                        && (!rest.is_empty() || self.fullstrip)
+                    {
                         out.push(format!("{}{rest}", r.add));
                     }
                 }
@@ -1111,9 +1404,14 @@ impl AffixDict {
         for (a, b) in &self.rep {
             out.push_str(&format!("REP {} {}\n", a.replace(' ', "_"), b.replace(' ', "_")));
         }
-        for (directive, mask) in
-            [("FORBIDDENWORD", self.forbidden), ("NOSUGGEST", self.no_suggest), ("SUBSTANDARD", self.substandard), ("KEEPCASE", self.keepcase)]
-        {
+        // //// Neoffice — `NEEDAFFIX` joins the one-flag directives; `FULLSTRIP`, `OCONV` and `BREAK` follow.
+        for (directive, mask) in [
+            ("FORBIDDENWORD", self.forbidden),
+            ("NOSUGGEST", self.no_suggest),
+            ("SUBSTANDARD", self.substandard),
+            ("KEEPCASE", self.keepcase),
+            ("NEEDAFFIX", self.needaffix),
+        ] {
             if !mask.is_empty()
                 && let Some(c) = self.flag_char(mask)
             {
@@ -1122,6 +1420,22 @@ impl AffixDict {
         }
         for (a, b) in &self.iconv {
             out.push_str(&format!("ICONV {a} {b}\n"));
+        }
+        // //// Neoffice — the compact format keeps FULLSTRIP.
+        if self.fullstrip {
+            out.push_str("FULLSTRIP\n");
+        }
+        for (a, b) in &self.oconv {
+            out.push_str(&format!("OCONV {a} {b}\n"));
+        }
+        let breaks = self
+            .break_start
+            .iter()
+            .map(|b| format!("^{b}"))
+            .chain(self.break_end.iter().map(|b| format!("{b}$")))
+            .chain(self.break_inner.iter().cloned());
+        for b in breaks {
+            out.push_str(&format!("BREAK {b}\n"));
         }
         if !self.ignore.is_empty() {
             out.push_str(&format!("IGNORE {}\n", self.ignore.iter().collect::<String>()));
@@ -1182,16 +1496,23 @@ impl AffixDict {
             match at(0) {
                 "TRY" => rules.try_chars = cap_try(at(1)),
                 "KEY" => rules.key = at(1).to_string(),
-                directive @ ("FORBIDDENWORD" | "NOSUGGEST" | "SUBSTANDARD" | "KEEPCASE") => {
+                // //// Neoffice — NEEDAFFIX joins the one-flag directives the compact format keeps.
+                directive @ ("FORBIDDENWORD" | "NOSUGGEST" | "SUBSTANDARD" | "KEEPCASE" | "NEEDAFFIX") => {
                     let c = one_flag(at(1), directive, 0).map_err(|_| format!("affix dictionary: bad {directive} in `{line}`"))?;
                     match directive {
                         "FORBIDDENWORD" => rules.forbidden = Some(c),
                         "NOSUGGEST" => rules.no_suggest = Some(c),
                         "SUBSTANDARD" => rules.substandard = Some(c),
+                        // //// Neoffice — the compact format keeps NEEDAFFIX too.
+                        "NEEDAFFIX" => rules.needaffix = Some(c),
                         _ => rules.keepcase = Some(c),
                     }
                 }
                 "ICONV" if f.len() == 3 => rules.iconv.push((at(1).to_string(), at(2).to_string())),
+                // //// Neoffice — the compact format keeps OCONV, FULLSTRIP and BREAK.
+                "OCONV" if f.len() == 3 => rules.oconv.push((at(1).to_string(), at(2).to_string())),
+                "FULLSTRIP" => rules.fullstrip = true,
+                "BREAK" if f.len() == 2 => rules.breaks.push(at(1).to_string()),
                 "IGNORE" => rules.ignore = at(1).chars().collect(),
                 "MAP" => rules.map.push(at(1).chars().collect()),
                 "REP" => rules.rep.push((at(1).replace('_', " "), at(2).replace('_', " "))),
@@ -1403,7 +1724,7 @@ pub(crate) mod tests {
     #[test]
     fn flag_utf8_and_default_modes_are_accepted() {
         // `FLAG UTF-8` (VERO pt_BR) and `FLAG DEFAULT` are per-character flag modes: the same
-        // mode the reader already assumes. Only `long` and `num` stay unsupported.
+        // mode the reader already assumes. Only `num` stays unsupported (`long` is read, see `long_flags_are_read_as_pairs`).
         for mode in ["UTF-8", "DEFAULT"] {
             let aff = format!("SET UTF-8\nFLAG {mode}\nSFX a Y 1\nSFX a   0   y   [^y]\n");
             let d = AffixDict::from_hunspell(&aff, "1\nkot/a\n", &[]).unwrap();
@@ -1756,9 +2077,193 @@ pub(crate) mod tests {
         }
     }
 
+    // //// Neoffice — tests for the directives the French dictionary (Grammalecte) needs: `FLAG long`, `FULLSTRIP`,
+    // `NEEDAFFIX`, `CIRCUMFIX`, `BREAK`, `OCONV`. Upstream's engine refused all of them; see the module docs.
+    /// `FLAG long`: every flag is two characters (`Aa`), in the `.dic`, in the rules, in their continuation classes
+    /// and in the directives that name one. The ticket upstream keeps open for the Indonesian dictionary (#5180).
+    #[test]
+    fn long_flags_are_read_as_pairs() {
+        let aff = "SET UTF-8\nFLAG long\nFORBIDDENWORD {}\nKEEPCASE ||\nNOSUGGEST --\n\
+                   SFX Aa Y 2\nSFX Aa 0 s .\nSFX Aa 0 x/Bb .\nSFX Bb N 1\nSFX Bb 0 y .\nSFX Ab N 1\nSFX Ab 0 z .\nPFX L' Y 1\nPFX L' 0 l' .\n";
+        let dic = "6\nkot/Aa\nchat/AaL'\nbad/{}\nkm/||\nsecret/--Aa\nnude/Ab\n";
+        let d = AffixDict::from_hunspell(aff, dic, &[]).unwrap();
+        for w in ["kot", "kots", "kotx", "kotxy", "chat", "chats", "l'chat", "l'chats", "nude", "nudez"] {
+            assert!(d.check(w), "{w}");
+        }
+        // `Aa` and `Ab` are different flags; a flag a stem doesn't carry doesn't apply.
+        for w in ["kotz", "nudes", "l'kot", "kotsy", "bad", "bads", "Km", "KM"] {
+            assert!(!d.check(w), "{w}");
+        }
+        assert!(d.check("km") && d.check("secret") && d.check("secrets"));
+        assert!(!d.can_suggest("secret") && !d.can_suggest("secrets") && d.can_suggest("kots"));
+        // The compact format keeps them.
+        let back = AffixDict::from_bytes(&d.to_bytes()).unwrap();
+        for w in ["kotxy", "l'chats", "km", "nudez"] {
+            assert!(back.check(w), "{w}");
+        }
+        assert!(!back.check("bad") && !back.check("Km") && !back.can_suggest("secret"));
+        // A rule, a continuation class or a directive whose flag is not made of pairs is an error; so is more
+        // flags than the engine holds. A `.dic` entry with a lone trailing character drops it, as Hunspell does.
+        assert!(AffixDict::from_hunspell("FLAG long\nSFX A Y 1\nSFX A 0 s .\n", "1\nkot/Aa\n", &[]).is_err());
+        assert!(AffixDict::from_hunspell("FLAG long\nKEEPCASE k\n", "1\nkot\n", &[]).is_err());
+        assert!(AffixDict::from_hunspell("FLAG long\nSFX Aa Y 1\nSFX Aa 0 s/B .\n", "1\nkot/Aa\n", &[]).is_err());
+        let odd = AffixDict::from_hunspell("FLAG long\nSFX Aa Y 1\nSFX Aa 0 s .\n", "1\nkot/AaB\n", &[]).unwrap();
+        assert!(odd.check("kots"));
+        let pairs: String = (0u32..300).map(|i| format!("{}a", char::from_u32(0x100 + i).unwrap_or('x'))).collect();
+        assert!(AffixDict::from_hunspell("FLAG long\n", &format!("1\nkot/{pairs}\n"), &[]).is_err());
+        // `AF` aliases hold long flags too.
+        let d = AffixDict::from_hunspell("FLAG long\nAF 1\nAF Aa\nSFX Aa Y 1\nSFX Aa 0 s .\n", "1\nkot/1\n", &[]).unwrap();
+        assert!(d.check("kots"));
+    }
+
+    /// Without `FULLSTRIP` a rule never strips the whole stem (the stem must stay longer than what the rule removes);
+    /// with it, French can conjugate a verb by replacing all of it (`être` → `sont`).
+    #[test]
+    fn fullstrip_lets_a_rule_replace_the_whole_stem() {
+        let rules = "SFX A Y 2\nSFX A être sont .\nSFX A être suis/B être\nSFX B N 1\nSFX B 0 s .\nPFX P Y 1\nPFX P ab xy ab\n";
+        let dic = "2\nêtre/A\nab/P\n";
+        let plain = AffixDict::from_hunspell(&format!("SET UTF-8\n{rules}"), dic, &[]).unwrap();
+        assert!(plain.check("être") && !plain.check("sont") && !plain.check("suis") && !plain.check("xy"));
+        assert!(plain.forms("être") == ["être"] && plain.forms("ab") == ["ab"], "{:?}", plain.forms("être"));
+        let full = AffixDict::from_hunspell(&format!("SET UTF-8\nFULLSTRIP\n{rules}"), dic, &[]).unwrap();
+        for w in ["être", "sont", "suis", "suiss", "Sont", "xy", "ab"] {
+            assert!(full.check(w), "{w}");
+        }
+        assert!(!full.check("sontx") && !full.check("sonts") && !full.check("suisss"));
+        assert!(full.forms("être").contains(&"sont".to_string()) && full.forms("ab").contains(&"xy".to_string()));
+        for stem in ["être", "ab"] {
+            for f in full.forms(stem) {
+                assert!(full.contains(&f), "{stem} → {f}");
+            }
+        }
+        let back = AffixDict::from_bytes(&full.to_bytes()).unwrap();
+        assert!(back.check("sont") && back.check("xy"), "the compact format keeps FULLSTRIP");
+    }
+
+    // //// Neoffice — French marks the units that take a plural (`watt/Um`) with a prefix that licenses the plural suffix.
+    /// A prefix's continuation classes license suffixes on the prefixed stem: `watt/Um` is a word with no prefix, `watts` through the
+    /// no-op prefix `Um` whose classes name the plural suffix the stem itself doesn't carry.
+    #[test]
+    fn prefix_continuation_classes_license_suffixes() {
+        let aff = "SET UTF-8\nFLAG long\nPFX Um Y 2\nPFX Um 0 0/Ss .\nPFX Um 0 milli/Ss .\nSFX Ss Y 1\nSFX Ss 0 s [^sxz]\n";
+        let d = AffixDict::from_hunspell(aff, "3\nwatt/Um\nhertz/Um\nplain\n", &[]).unwrap();
+        for w in ["watt", "watts", "milliwatt", "milliwatts", "hertz", "millihertz"] {
+            assert!(d.check(w), "{w}");
+        }
+        for w in ["hertzs", "millihertzs", "plains", "milliplain", "wattss", "milli"] {
+            assert!(!d.check(w), "{w}");
+        }
+        let mut forms = d.forms("watt");
+        forms.sort();
+        forms.dedup();
+        assert_eq!(forms, ["milliwatt", "milliwatts", "watt", "watts"]);
+        for stem in ["watt", "hertz", "plain"] {
+            for f in d.forms(stem) {
+                assert!(d.contains(&f), "{stem} → {f}");
+            }
+        }
+    }
+
+    /// `NEEDAFFIX`: a stem that carries the flag is a word only with an affix. An affix that carries it in its
+    /// continuation classes (a form that needs a second affix) is not implemented, so such a dictionary is refused.
+    #[test]
+    fn needaffix_stems_are_words_only_with_an_affix() {
+        let aff = "SET UTF-8\nNEEDAFFIX n\nSFX A Y 1\nSFX A 0 s .\nPFX P Y 1\nPFX P 0 re .\n";
+        let d = AffixDict::from_hunspell(aff, "3\nbare/nA\nreal/A\nlone/nP\n", &[]).unwrap();
+        for w in ["bares", "real", "reals", "relone"] {
+            assert!(d.check(w), "{w}");
+        }
+        for w in ["bare", "Bare", "BARE", "lone"] {
+            assert!(!d.check(w), "{w}");
+        }
+        assert!(!d.forms("bare").contains(&"bare".to_string()) && d.forms("bare").contains(&"bares".to_string()));
+        assert!(d.forms("real").contains(&"real".to_string()));
+        assert!(!d.contains_suggestible("bare") && d.contains_suggestible("bares"));
+        let back = AffixDict::from_bytes(&d.to_bytes()).unwrap();
+        assert!(!back.check("bare") && back.check("bares"));
+        let on_an_affix = "SET UTF-8\nNEEDAFFIX n\nSFX A Y 1\nSFX A 0 s/n .\n";
+        assert!(AffixDict::from_hunspell(on_an_affix, "1\nbare/A\n", &[]).is_err(), "NEEDAFFIX on an affix is refused");
+        // Declared and used by no stem, it changes nothing.
+        assert!(AffixDict::from_hunspell("NEEDAFFIX n\n", "1\nbare\n", &[]).unwrap().check("bare"));
+    }
+
+    /// `CIRCUMFIX` changes which words are correct and is not implemented: it is refused where its flag is used
+    /// (a dictionary that declares it and never uses it, like the French one, loads).
+    #[test]
+    fn circumfix_is_refused_only_where_its_flag_is_used() {
+        let unused = AffixDict::from_hunspell("SET UTF-8\nCIRCUMFIX c\nSFX A Y 1\nSFX A 0 s .\n", "1\nkot/A\n", &[]).unwrap();
+        assert!(unused.check("kots"));
+        for (aff, dic) in [
+            ("CIRCUMFIX c\nSFX A Y 1\nSFX A 0 s/c .\n", "1\nkot/A\n"),
+            ("CIRCUMFIX c\nPFX c Y 1\nPFX c 0 ge .\n", "1\nkot\n"),
+            ("CIRCUMFIX c\n", "1\nkot/c\n"),
+        ] {
+            assert!(AffixDict::from_hunspell(aff, dic, &[]).is_err(), "{aff}");
+        }
+    }
+
+    /// `BREAK`: a word that is not in the dictionary as a whole is correct when it breaks at one of the
+    /// dictionary's break strings into correct parts (`est-ce`); `^x` and `x$` strip a character at the start
+    /// or the end of the word. A dictionary with no `BREAK` line breaks nowhere (Hunspell would break at hyphens).
+    #[test]
+    fn break_checks_the_parts() {
+        let dic = "6\nest\nce\nparle\nt\nil\nJean\n";
+        let aff = "SET UTF-8\nBREAK 3\nBREAK -\nBREAK ^'\nBREAK '$\n";
+        let d = AffixDict::from_hunspell(aff, dic, &[]).unwrap();
+        for w in ["est-ce", "Est-ce", "EST-CE", "parle-t-il", "'est", "il'", "est-ce-il", "Jean-Jean", "ce-Jean"] {
+            assert!(d.check(w), "{w}");
+        }
+        for w in ["est-cx", "xest-ce", "est-ce-x", "'x", "est--ce", "jean-ce", "-", "'"] {
+            assert!(!d.check(w), "{w}");
+        }
+        // Only `check` breaks: the dictionary has no word `est-ce`.
+        assert!(!d.contains("est-ce"));
+        // Without a BREAK line, and with `BREAK 0`, nothing breaks.
+        for aff in ["SET UTF-8\n", "SET UTF-8\nBREAK 0\n"] {
+            assert!(!AffixDict::from_hunspell(aff, dic, &[]).unwrap().check("est-ce"), "{aff}");
+        }
+        // A long chain of parts is answered, and the work is bounded.
+        let long = vec!["est"; 20].join("-");
+        assert!(d.check(&long));
+        let hostile = vec!["est"; 5000].join("-") + "-x";
+        let started = std::time::Instant::now();
+        assert!(!d.check(&hostile));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        let back = AffixDict::from_bytes(&d.to_bytes()).unwrap();
+        assert!(back.check("parle-t-il") && back.check("'est") && !back.check("est-cx"));
+    }
+
+    /// A word in capitals with an apostrophe is read as Hunspell reads it: the article elided before a proper noun (`L'ALLEMAGNE`).
+    #[test]
+    fn capitals_with_an_apostrophe_read_the_proper_noun() {
+        let aff = "SET UTF-8\nPFX L Y 2\nPFX L 0 l' .\nPFX L 0 L' .\n";
+        let d = AffixDict::from_hunspell(aff, "2\nAllemagne/L\nchat\n", &[]).unwrap();
+        for w in ["l'Allemagne", "L'Allemagne", "L'ALLEMAGNE"] {
+            assert!(d.check(w), "{w}");
+        }
+        for w in ["D'ALLEMAGNE", "L'ALLEMAGN", "L'CHAT", "'ALLEMAGNE", "L'", "L'allemagne", "L'ALLEMAGNE'"] {
+            assert!(!d.check(w), "{w}");
+        }
+    }
+
+    /// `OCONV` rewrites the suggestions that are shown (the French dictionary asks for typographic apostrophes); it
+    /// never changes what is correct.
+    #[test]
+    fn oconv_rewrites_output_only() {
+        let d = AffixDict::from_hunspell("SET UTF-8\nICONV 1\nICONV ’ '\nOCONV 2\nOCONV ' ’\nOCONV ﬁ fi\n", "1\nl'été\n", &[]).unwrap();
+        assert_eq!(d.convert_output("l'été"), "l’été");
+        assert_eq!(d.convert_output("ﬁn"), "fin");
+        assert_eq!(d.convert_output("été"), "été");
+        assert!(d.check("l'été") && d.check("l’été"), "input is read through ICONV, OCONV changes nothing there");
+        let back = AffixDict::from_bytes(&d.to_bytes()).unwrap();
+        assert_eq!(back.convert_output("l'été"), "l’été");
+        assert_eq!(AffixDict::default().convert_output("l'été"), "l'été");
+    }
+
     #[test]
     fn unsupported_and_broken_input_is_an_error() {
-        assert!(AffixDict::from_hunspell("FLAG long\n", DIC, &[]).is_err());
+        // //// Neoffice — FLAG long is read now: the example of a refused file is FLAG num, and COMPOUNDFLAG below.
+        assert!(AffixDict::from_hunspell("FLAG long\n", DIC, &[]).is_ok(), "FLAG long is supported");
         assert!(AffixDict::from_hunspell("FLAG num\n", DIC, &[]).is_err());
         assert!(AffixDict::from_hunspell("COMPOUNDFLAG X\n", DIC, &[]).is_err());
         assert!(AffixDict::from_hunspell("SFX a Y 1\nSFX a 0 y [ab\n", DIC, &[]).is_err());
