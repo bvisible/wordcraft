@@ -74,37 +74,21 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     }
 }
 
-// //// Neoffice — added: the Nora assistant pane's panel, which `craft_ui::panes` knows nothing about.
+// //// Neoffice — added: the Nora assistant pane's panel, which `craft_ui::panes` knows nothing about. The panel draws its
+// own canvas, head and close button (the Neoffice design system's: `craft_nora_ui`), so the frame has no fill and no margin.
 fn nora_panel(app: &mut WordApp, ui: &mut Ui, t: &Tokens) {
     egui::Panel::right("nora_pane")
-        .default_size(320.0)
+        .default_size(340.0)
+        .min_size(280.0)
         .resizable(true)
-        .frame(egui::Frame::NONE.fill(t.panel).inner_margin(10).stroke(Stroke::new(1.0, t.border)))
+        .frame(egui::Frame::NONE.stroke(Stroke::new(1.0, t.border)))
         .show(ui, |ui| {
-            if nora_header(ui) {
-                let _ = app.run("ui.nora", json!({"value": false}));
-                crate::nora_pane::remember(false); // //// Neoffice — the person's choice, kept in the browser ////
-                return;
-            }
             crate::nora_pane::show(app, ui);
         });
-}
-
-// //// Neoffice — added: the title row of the Nora panel (upstream's panes draw their own, through `PaneHost`); true
-// when its close button was clicked.
-fn nora_header(ui: &mut Ui) -> bool {
-    let mut close = false;
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(tl!("Nora")).font(crate::theme::semibold(15.0)));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // Drawn, not the "✕" character: the interface fonts have no glyph for it.
-            if crate::widgets::icon_button(ui, "close", tl!("Close")).clicked() {
-                close = true;
-            }
-        });
-    });
-    ui.add_space(4.0);
-    close
+    if app.nora.panel.take_close_request() {
+        let _ = app.run("ui.nora", json!({"value": false}));
+        crate::nora_pane::remember(false); // //// Neoffice — the person's choice, kept in the browser ////
+    }
 }
 
 /// Run a request from the pane host through the pane's commands and the UI preferences.

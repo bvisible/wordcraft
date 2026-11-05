@@ -222,6 +222,9 @@ impl WordApp {
 
     /// Per-frame logic before layout: control requests, screenshots, shortcuts, file drops.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        // //// Neoffice — Nora goes on reading her actions when the window is hidden (no frame is drawn then, the pane's own
+        // pump never runs): see `nora_pane::pump_hidden`.
+        crate::nora_pane::pump_hidden(self, ctx);
         updates_ui::tick(self, ctx);
         let lang = i18n::Lang::from_pref(&self.ui.language);
         i18n::set_current(lang);

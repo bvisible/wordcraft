@@ -72,6 +72,20 @@ fn host_function(name: &str) -> Option<(JsValue, js_sys::Function)> {
     windows.into_iter().find_map(|w| get(&w, name).filter(JsValue::is_function).map(|f| (w, js_sys::Function::from(f))))
 }
 
+/// Whether the page, or the page of the same origin that frames it, sets `name` to `true`.
+fn host_flag(name: &str) -> bool {
+    let Some(window) = web_sys::window() else { return false };
+    let own = JsValue::from(window.clone());
+    let mut windows = vec![own.clone()];
+    if let Ok(Some(parent)) = window.parent() {
+        let parent = JsValue::from(parent);
+        if parent != own && get(&parent, "document").is_some() {
+            windows.push(parent);
+        }
+    }
+    windows.iter().any(|w| get(w, name).and_then(|value| value.as_bool()) == Some(true))
+}
+
 /// One call made by the host: its answer read as a `fetch`'s (status 0 when it gave none).
 async fn call_host(owner: &JsValue, function: &js_sys::Function, request: &HttpRequest) -> Result<(u16, String), String> {
     let promise = function.call2(owner, &JsValue::from_str(&request.path), &JsValue::from_str(&request.body.to_string())).map_err(reason)?;
@@ -95,6 +109,11 @@ pub fn connect(services: &mut Services, origin: String, ctx: egui::Context) {
             }
         }));
     }
+    // //// Neoffice — the host that carries a dictation to the server (`wordcraftNoraCall` with `nora.api.stt.transcribe`:
+    // the recording as base64, the host makes the form with the person's credentials) says so with
+    // `window.wordcraftNoraDictation = true`, on the page or the page that frames the editor; the pane then offers its
+    // microphone, where the browser can record. An older host never sets it: no microphone that would send nowhere.
+    services.nora_dictation = host_flag("wordcraftNoraDictation");
     let inbox: NoraInbox = Arc::new(Mutex::new(Vec::new()));
     services.nora_inbox = Some(inbox.clone());
     services.nora_http = Some(Box::new(move |request: HttpRequest| {

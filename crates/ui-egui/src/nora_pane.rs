@@ -42,7 +42,9 @@ use craft_nora::{
     AppKind, CommandCall, CommandPolicy, Decision, DocActionKind, DocumentInfo, HttpRequest, HttpResponse, Input, NoraError, NoraSession, Output,
     PageContext, Selection, SessionConfig,
 };
-use craft_nora_ui::{CorrectionWords, LauncherWords, NoraLabels, NoraPanel, NoraStyle, PaneMemory, PanelAction, ResumeWords, drive};
+use craft_nora_ui::{
+    ActivityWords, CorrectionWords, LauncherWords, NoraLabels, NoraPanel, PaneMemory, PaneWords, PanelAction, ResumeWords, VoiceWords, drive,
+};
 use egui::Ui;
 use serde_json::{Value, json};
 use wordcraft_doc::props::CharProps;
@@ -152,7 +154,7 @@ fn policy() -> CommandPolicy {
 /// changed.
 pub struct NoraState {
     session: NoraSession,
-    panel: NoraPanel,
+    pub(crate) panel: NoraPanel,
     /// Nora's changes that the pane's Undo can take back, the newest last.
     changes: Vec<Change>,
     /// While the pane plays a command of Nora's: what the command asked of the interface (a dialog, a
@@ -180,12 +182,10 @@ impl Default for NoraState {
     fn default() -> Self {
         let context = PageContext::editor(AppKind::Word, DocumentInfo::named(""));
         let config = SessionConfig { policy: policy(), ..SessionConfig::default() };
-        NoraState {
-            session: NoraSession::new(config, context),
-            panel: NoraPanel::new().with_error_words(error_words),
-            changes: Vec::new(),
-            asked: None,
-        }
+        // The panel draws its own head and close button (the pane's frame is empty: panes/host.rs).
+        let mut panel = NoraPanel::new().with_error_words(error_words);
+        panel.closable = true;
+        NoraState { session: NoraSession::new(config, context), panel, changes: Vec::new(), asked: None }
     }
 }
 
@@ -221,6 +221,19 @@ pub fn top_button(app: &mut WordApp, ui: &mut Ui) {
     }
 }
 
+/// Nora's pump while the window is hidden: with the window behind another (or the tab in the background) the browser
+/// draws no frame and eframe runs only `logic`, so the pane's own pump (`show`) never runs and Nora's actions wait in
+/// the queue, the server asking again every fifteen seconds. Called from `WordApp::logic`, it reads her queue, plays her
+/// actions and sends the answers while nothing is drawn; where a frame is drawn (`show`) nothing changes.
+pub fn pump_hidden(app: &mut WordApp, ctx: &egui::Context) {
+    if app.services.nora_http.is_none() || !app.nora.session.is_busy() || ctx.input(|input| input.viewport().visible()) != Some(false) {
+        return;
+    }
+    let mut outputs = drive(ctx, &mut app.nora.session);
+    outputs.extend(deliver_answers(app));
+    perform(app, outputs, ctx);
+}
+
 pub fn show(app: &mut WordApp, ui: &mut Ui) {
     // The frame's tick first, then the answers (craft-libs ed1cb40): after a gap without frames (a tab in the
     // background) the session knows it before it reads an answer that waited in the page, whose action it then refuses
@@ -228,9 +241,14 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     let mut outputs = drive(ui.ctx(), &mut app.nora.session);
     outputs.extend(deliver_answers(app));
     app.nora.panel.labels = labels();
+    app.nora.panel.pane_words = pane_words();
+    app.nora.panel.activity_words = activity_words();
+    app.nora.panel.voice_words = voice_words();
     app.nora.panel.resume_words = resume_words();
     app.nora.panel.correction_words = correction_words();
-    app.nora.panel.style = style(ui);
+    // The microphone only where the host carries the recording to the server, and in the interface's language.
+    app.nora.panel.dictation = app.services.nora_dictation;
+    app.nora.session.set_language(crate::i18n::current().code().split('-').next().unwrap_or("fr"));
     app.nora.panel.offline = app.services.nora_http.is_none().then(|| tl!("Nora isn't available in this version yet").to_string());
     app.nora.panel.open_links = app.services.nora_open.is_some();
     for action in app.nora.panel.show(ui, &app.nora.session) {
@@ -760,25 +778,11 @@ fn context_of(app: &mut WordApp) -> PageContext {
     PageContext::editor(AppKind::Word, DocumentInfo { name, id, pages, selection })
 }
 
-/// The pane's bubbles in WordCraft's own colors, light or dark.
-fn style(ui: &Ui) -> NoraStyle {
-    let t = crate::theme::Tokens::get(ui.ctx());
-    NoraStyle {
-        user_fill: Some(t.accent),
-        user_text: Some(t.on_accent),
-        nora_fill: Some(t.hover),
-        nora_text: Some(t.text),
-        // The pane's bold words in the app's own bold face.
-        bold_family: Some("semibold"),
-        ..NoraStyle::default()
-    }
-}
-
-/// The words of the pane in the interface language. The pane's title bar is WordCraft's own, so the
-/// panel's is left empty.
+/// The words of the pane in the interface language. The panel draws its own head (her sphere and her name), so the title is
+/// her name.
 fn labels() -> NoraLabels {
     NoraLabels {
-        title: String::new(),
+        title: tl!("Nora").to_string(),
         new_conversation: tl!("New conversation").to_string(),
         undo: tl!("Undo").to_string(),
         undo_hint: tl!("Undo the last change Nora made to the document").to_string(),
@@ -793,6 +797,46 @@ fn labels() -> NoraLabels {
         refuse: tl!("Refuse").to_string(),
         open: tl!("Open").to_string(),
         describe,
+    }
+}
+
+/// The close button, the greeting and the ready requests of an empty page, in the interface language.
+fn pane_words() -> PaneWords {
+    PaneWords {
+        close: tl!("Close").to_string(),
+        undo_change: tl!("Undo this change").to_string(),
+        greeting: tl!("How can I help?").to_string(),
+        suggestions: vec![
+            tl!("Fix the spelling and grammar").to_string(),
+            tl!("Improve the text").to_string(),
+            tl!("Summarise this document").to_string(),
+            tl!("Translate into English").to_string(),
+        ],
+    }
+}
+
+/// What the line under the conversation says of what Nora is doing, in the interface language.
+fn activity_words() -> ActivityWords {
+    ActivityWords {
+        thinking: tl!("Nora is thinking…").to_string(),
+        reading: tl!("Nora is reading the document…").to_string(),
+        writing: tl!("Nora is editing the document…").to_string(),
+        handing: tl!("Nora is finishing up…").to_string(),
+        seconds: tl!("s").to_string(),
+    }
+}
+
+/// The microphone's words, in the interface language.
+fn voice_words() -> VoiceWords {
+    VoiceWords {
+        dictate: tl!("Dictate").to_string(),
+        stop: tl!("Stop and keep what you said").to_string(),
+        cancel: tl!("Cancel").to_string(),
+        transcribing: tl!("Writing down what you said…").to_string(),
+        nothing_heard: tl!("I did not hear anything. Try again, a little closer to the microphone.").to_string(),
+        denied: tl!("The microphone is blocked. Allow it for this page, then try again.").to_string(),
+        no_microphone: tl!("No microphone found on this computer.").to_string(),
+        failed: tl!("The dictation did not work. Try again, or type your request.").to_string(),
     }
 }
 

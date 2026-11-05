@@ -106,6 +106,9 @@ pub struct Services {
     // it the pane shows a link as its words.
     /// Open a page of the person's instance, by its path, the host's own way.
     pub nora_open: Option<Box<dyn Fn(&str)>>,
+    // //// Neoffice — the host carries a dictation to the server (`nora.api.stt.transcribe`, with the person's credentials):
+    // the pane then offers its microphone, where the browser can record. Off for every other build.
+    pub nora_dictation: bool,
     // //// Neoffice — what a hosting page (the Drive of the Suite, Neodesk's window) changes about the editor: a text
     // file the person opened is saved as text rather than turned into a Word document, the links to the upstream
     // project's community (Discord) are not shown, and the page, not the editor, opens documents. All off, as

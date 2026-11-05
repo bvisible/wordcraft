@@ -85,6 +85,14 @@ their own `//// Neoffice — added file` header.
   `apps/wordcraft-web/src/nora_origin.rs`, tested natively; before, a link to an editor with
   `?nora=https://elsewhere.example` sent the person's messages, what Nora read of the document and the
   page's CSRF token there.
+- **The Nora pane redone, 2026-11-05** (`craft-nora-ui` at `7bc770d`: the Neoffice design system's look, Nora's sphere, what she is
+  doing in words, and a microphone). The panel now draws its own canvas, head and close button, so `crates/ui-egui/src/panes/host.rs`
+  gives it a frame with no fill and no margin and drops the old title row (`nora_header`), and `crates/ui-egui/src/nora_pane.rs` no
+  longer passes the editor's colours (`style` is gone). Dictation is offered only where the host says it carries a recording to the
+  server: `Services::nora_dictation` (`crates/ui-egui/src/services.rs`), set from `window.wordcraftNoraDictation` on the page or the
+  page that frames the editor (`apps/wordcraft-web/src/web/nora.rs`, `host_flag`). While the window is hidden eframe runs
+  no frame, only `logic`: `WordApp::logic` (`crates/ui-egui/src/app.rs`) calls `nora_pane::pump_hidden`, so that Nora's queue is
+  read and her actions played (`drive` reads the page's clock). New French strings in `crates/ui-egui/src/i18n/neoffice.rs`.
 - **The URL flags of the browser build read by name** (new file `apps/wordcraft-web/src/flags.rs`,
   `URLSearchParams`; marked lines in `apps/wordcraft-web/src/web.rs` and `apps/wordcraft-web/src/main.rs`,
   which builds the two new modules for the native tests too): upstream found `webgl` and `sample`
