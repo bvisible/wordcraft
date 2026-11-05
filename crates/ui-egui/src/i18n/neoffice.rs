@@ -65,6 +65,9 @@ pub const FRENCH: &[(&str, &str)] = &[
     (CORRECTION.1, "Tout n'a pas été fait : une partie n'a pas pu s'exécuter dans le document à temps."),
     (BUTTON.0, "Demander à Nora"),
     (BUTTON.1, "Nora, l’assistante Neoffice"),
+    (LANGUAGE_NAMES[0], "Espagnol (Amérique latine)"),
+    (LANGUAGE_NAMES[1], "Espagnol (Uruguay)"),
+    (LANGUAGE_NAMES[2], "Français (Suisse)"),
 ];
 
 /// The strings the interface looks up whatever the Nora pane does (its ribbon group and its switch in
@@ -279,6 +282,19 @@ const BUTTON_WORDS: &[(&str, &str, &str)] = &[
     ("zh-hant", "詢問 Nora", "Nora，Neoffice 助理"),
 ];
 
+/// Names in the Language menu that upstream's catalogs have no row for: the two Spanishes of the Americas (shown in English in
+/// every interface), and French (Switzerland), which the menu offers since French is proofed.
+const LANGUAGE_NAMES: [&str; 3] = ["Spanish (Latin America)", "Spanish (Uruguay)", "French (Switzerland)"];
+
+/// [`LANGUAGE_NAMES`] in German, Spanish and Italian (translated by Haiku, 05.11.2026, in the style of the catalogs' "Spanish
+/// (Mexico)"): the code, then the three names in the order of [`LANGUAGE_NAMES`]. French is in [`FRENCH`]; the other languages
+/// show them in English until someone adds them.
+const LANGUAGE_NAMES_WORDS: &[(&str, [&str; 3])] = &[
+    ("de", ["Spanisch (Lateinamerika)", "Spanisch (Uruguay)", "Französisch (Schweiz)"]),
+    ("es", ["Español (América Latina)", "Español (Uruguay)", "Francés (Suiza)"]),
+    ("it", ["Spagnolo (America Latina)", "Spagnolo (Uruguay)", "Francese (Svizzera)"]),
+];
+
 /// `s` in `lang`, when Neoffice has translated it.
 pub fn plain(lang: Lang, s: &str) -> Option<&'static str> {
     let code = lang.code();
@@ -294,6 +310,10 @@ pub fn plain(lang: Lang, s: &str) -> Option<&'static str> {
         .or_else(|| pair(RESUME_WORDS, RESUME, code, s))
         .or_else(|| pair(CORRECTION_WORDS, CORRECTION, code, s))
         .or_else(|| pair(BUTTON_WORDS, BUTTON, code, s))
+        .or_else(|| {
+            let at = LANGUAGE_NAMES.iter().position(|english| *english == s)?;
+            LANGUAGE_NAMES_WORDS.iter().find(|(language, _)| *language == code).and_then(|(_, names)| names.get(at).copied())
+        })
 }
 
 /// The translation of one of `english`'s two strings in `table`, for the language `code`.
@@ -392,6 +412,23 @@ mod tests {
             assert!(plain(lang, CORRECTION.0).is_some_and(|said| said.contains("Nora") || said.contains("Нора")), "{}", lang.code());
         }
         assert_eq!(CORRECTION_WORDS.len() + 2, crate::i18n::Lang::all().count(), "every language but English and French");
+    }
+
+    #[test]
+    fn the_language_names_upstream_lacks_are_translated_where_we_did() {
+        for code in ["fr", "de", "es", "it"] {
+            let lang = crate::i18n::Lang::all().find(|l| l.code() == code).unwrap_or_else(|| panic!("{code}: no such language"));
+            for english in LANGUAGE_NAMES {
+                let said = plain(lang, english).unwrap_or_else(|| panic!("{code}: no translation of {english:?}"));
+                assert!(said != english && said.contains(" (") && said.ends_with(')') && said.trim() == said, "{code}: {said:?}");
+            }
+        }
+        // The other languages, and English, have none yet.
+        for lang in crate::i18n::Lang::all().filter(|l| !matches!(l.code(), "fr" | "de" | "es" | "it")) {
+            assert_eq!(plain(lang, LANGUAGE_NAMES[0]), None, "{}", lang.code());
+        }
+        let mut seen = std::collections::HashSet::new();
+        assert!(LANGUAGE_NAMES.iter().all(|n| seen.insert(*n)));
     }
 
     #[test]
