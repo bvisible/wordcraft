@@ -192,15 +192,17 @@ impl Session {
     }
 
     // //// Neoffice — French is proofed (`wordcraft_proof::fr`): a French interface writes new documents in the region's French.
+    // Switzerland's French is the default when the region says nothing more precise: Neoffice's people are Swiss, and a browser or
+    // an Electron window often reports a bare `fr` where the Mac says `fr-CH`. Same dictionary as France's, so only the name differs.
     /// The French of the region in effect (`fr-CH` on a Swiss system, `fr-CA` on a Canadian one; the ISO 639-2 `fra` and `fre`
-    /// count as French), or France's (`fr-FR`) when the region's language isn't French or it names no territory. A French
+    /// count as French), or Switzerland's (`fr-CH`) when the region's language isn't French or it names no territory. A French
     /// interface writes new documents in it, so they are proofed in the writer's French from the first word.
     pub fn region_french(&self) -> String {
         let r = self.region();
         (matches!(r.language.as_str(), "fr" | "fra" | "fre") && !r.territory.is_empty())
             .then(|| format!("fr-{}", r.territory))
             .and_then(|t| wordcraft_proof::lang::normalize_tag(&t))
-            .unwrap_or_else(|| "fr-FR".into())
+            .unwrap_or_else(|| "fr-CH".into())
     }
 
     /// The unit rulers and dialogs show lengths in: the user's choice, else the region's.

@@ -8746,13 +8746,20 @@ fn new_documents_follow_the_regions_english() {
 }
 
 // //// Neoffice — French is proofed, so a French interface writes French.
-/// A French interface writes new documents in the region's French: Switzerland's on a Swiss system, France's elsewhere.
+/// A French interface writes new documents in the region's French (France's on a French system, Belgium's, Canada's…), and in
+/// Switzerland's when the region names no French territory: a bare `fr`, another language's region.
 #[test]
 fn new_documents_follow_the_regions_french() {
     let mut s = s();
-    for (system, french) in
-        [("fr_CH.UTF-8", "fr-CH"), ("fra_BE.UTF-8", "fr-BE"), ("fr-CA", "fr-CA"), ("fr", "fr-FR"), ("en-US", "fr-FR"), ("de_CH.UTF-8", "fr-FR")]
-    {
+    for (system, french) in [
+        ("fr_CH.UTF-8", "fr-CH"),
+        ("fr_FR.UTF-8", "fr-FR"),
+        ("fra_BE.UTF-8", "fr-BE"),
+        ("fr-CA", "fr-CA"),
+        ("fr", "fr-CH"),
+        ("en-US", "fr-CH"),
+        ("de_CH.UTF-8", "fr-CH"),
+    ] {
         s.system_region = wordcraft_geom::Region::from_tag(system);
         assert_eq!(s.region_french(), french, "{system}");
     }
