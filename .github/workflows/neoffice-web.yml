@@ -92,6 +92,19 @@ jobs:
             grep -q -a -F "$word" "$wasm" || { echo "::error::'$word' is not in $wasm: a language of the interface is missing"; exit 1; }
             echo "found: $word"
           done
+      # //// Neoffice — the browser reads no dictionary folder, so French is checked only because its dictionary is inside the
+      # program (crates/proof/src/fr/builtin.rs names it with this label). A build that dropped it would still start, and
+      # French would go unchecked without a word. The sizes are printed: they are what the dictionary costs.
+      - name: The French dictionary is in the build
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          unzip -q dist/release/wordcraft-web-*.zip -d "$work"
+          wasm=$(find "$work" -name '*.wasm' | head -n 1)
+          test -n "$wasm"
+          grep -q -a -F "Grammalecte 7.7 (MPL 2.0)" "$wasm" || { echo "::error::the French dictionary is not in $wasm"; exit 1; }
+          ls -l "$wasm" dist/release/wordcraft-web-*.zip
+          echo "wasm bytes: $(wc -c < "$wasm")"
       - name: Checksums
         run: |
           set -euo pipefail
