@@ -8746,16 +8746,18 @@ fn new_documents_follow_the_regions_english() {
 }
 
 // //// Neoffice — French is proofed, so a French interface writes French.
-/// A French interface writes new documents in the region's French (France's on a French system, Belgium's, Canada's…), and in
-/// Switzerland's when the region names no French territory: a bare `fr`, another language's region.
+/// A French interface writes new documents in Switzerland's French, whatever a browser reports for France (`fr-FR`, a bare `fr`) or
+/// another language's region; only Belgium's, Canada's, Luxembourg's and Monaco's regions keep their own French.
 #[test]
 fn new_documents_follow_the_regions_french() {
     let mut s = s();
     for (system, french) in [
         ("fr_CH.UTF-8", "fr-CH"),
-        ("fr_FR.UTF-8", "fr-FR"),
+        ("fr_FR.UTF-8", "fr-CH"),
+        ("fr-FR", "fr-CH"),
         ("fra_BE.UTF-8", "fr-BE"),
         ("fr-CA", "fr-CA"),
+        ("fr_LU", "fr-LU"),
         ("fr", "fr-CH"),
         ("en-US", "fr-CH"),
         ("de_CH.UTF-8", "fr-CH"),

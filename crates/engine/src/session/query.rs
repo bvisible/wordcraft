@@ -191,18 +191,17 @@ impl Session {
             .unwrap_or_else(|| "es-ES".into())
     }
 
-    // //// Neoffice — French is proofed (`wordcraft_proof::fr`): a French interface writes new documents in the region's French.
-    // Switzerland's French is the default when the region says nothing more precise: Neoffice's people are Swiss, and a browser or
-    // an Electron window often reports a bare `fr` where the Mac says `fr-CH`. Same dictionary as France's, so only the name differs.
-    /// The French of the region in effect (`fr-CH` on a Swiss system, `fr-CA` on a Canadian one; the ISO 639-2 `fra` and `fre`
-    /// count as French), or Switzerland's (`fr-CH`) when the region's language isn't French or it names no territory. A French
-    /// interface writes new documents in it, so they are proofed in the writer's French from the first word.
+    // //// Neoffice — French is proofed (`wordcraft_proof::fr`): a French interface writes new documents in French the Swiss way.
+    // Neoffice's people are Swiss, and a browser reports `fr-FR` (or a bare `fr`) whatever the person's country: the French default
+    // browsers and Electron windows give in French is no sign of France. So France's tag, a bare `fr` and another language's region all
+    // give Switzerland's French; only a region that names another French-speaking country (Belgium, Canada, Luxembourg, Monaco) keeps it.
+    // The dictionary is the same for every tag: only the name in the status bar and the Language menu differs.
+    /// The French a French interface writes new documents in: `fr-BE`, `fr-CA`, `fr-LU` or `fr-MC` when the region in effect is
+    /// that country's (the ISO 639-2 `fra` and `fre` count as French), else Switzerland's (`fr-CH`).
     pub fn region_french(&self) -> String {
         let r = self.region();
-        (matches!(r.language.as_str(), "fr" | "fra" | "fre") && !r.territory.is_empty())
-            .then(|| format!("fr-{}", r.territory))
-            .and_then(|t| wordcraft_proof::lang::normalize_tag(&t))
-            .unwrap_or_else(|| "fr-CH".into())
+        let own = matches!(r.language.as_str(), "fr" | "fra" | "fre") && matches!(r.territory.as_str(), "BE" | "CA" | "LU" | "MC");
+        if own { format!("fr-{}", r.territory) } else { "fr-CH".into() }
     }
 
     /// The unit rulers and dialogs show lengths in: the user's choice, else the region's.

@@ -159,7 +159,7 @@ their own `//// Neoffice — added file` header.
   `BREAK` (the parts of a hyphenated word; absent from the `.aff`, nothing breaks, as before), `OCONV` on the suggestions shown, and
   the continuation classes of a prefix that license suffixes (`watts`); tests that used `FLAG long` as the example of a refused file
   use `COMPOUNDFLAG` (marked, `cs`, `es`, `id`, `it`, `pl`, `pt`, `slot`). Suggestions add the French elision (`jai` → `j'ai`).
-  A French interface writes the region's French (`Session::region_french`, marked lines in `crates/ui-egui/src/app.rs`), and the
+  A French interface writes Switzerland's French unless the region is Belgium's, Canada's, Luxembourg's or Monaco's (`Session::region_french`, marked lines in `crates/ui-egui/src/app.rs`), and the
   blank file a hosting page hands over, which says `en-US` (the Drive's new document), follows it
   (`Session::adopt_editing_language_when_blank`, called from `drain_inbox` in `app/files.rs`); Review › Language lists French (France)
   and (Switzerland) (`ribbon/language.rs`, `options.rs`), and `i18n/neoffice.rs` names the three menu entries upstream's catalogs lack
