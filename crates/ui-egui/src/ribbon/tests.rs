@@ -586,18 +586,22 @@ fn language_menu_reaches_every_language() {
     let app = WordApp::new(Session::new(wordcraft_doc::Document::from_text("Bonjour")), crate::Services::default());
     let mut h = egui_kittest::Harness::builder().with_size(vec2(400.0, 600.0)).build_ui_state(|ui, app: &mut WordApp| language_menu(ui, app), app);
     h.run();
-    assert!(h.query(item("French (France)")).is_none(), "the short list only, on an English document");
+    // //// Neoffice — French is in the short list now: German stands in for "a language outside the short list".
+    assert!(h.query(item("German (Germany)")).is_none(), "the short list only, on an English document");
+    assert!(h.query(item("French (France)")).is_some() && h.query(item("French (Switzerland)")).is_some(), "French is proofed, so listed");
     assert!(!h.get(item("Set Proofing Language…")).accesskit_node().is_disabled(), "never greyed out on a fresh document");
     assert!(!h.get(item("English (United States)")).accesskit_node().is_disabled());
     h.get(item("Set Proofing Language…")).click();
     h.run();
     assert_eq!(h.state().dialog.as_ref().map(crate::dialogs::Dialog::name), Some("language"));
     h.state_mut().dialog = None;
-    // French for the whole document: the menu and the status bar name it.
-    h.state_mut().run("review.language", json!({"lang": "fr-FR", "default": true})).unwrap();
+    // //// Neoffice — German stands in for a language outside the short list, French being in it now.
+    // German for the whole document: the menu and the status bar name it.
+    h.state_mut().run("review.language", json!({"lang": "de-DE", "default": true})).unwrap();
     h.run();
-    assert_eq!(caret_language(h.state()), "French (France)");
-    assert!(h.query(item("French (France)")).is_some(), "the current language is listed (only while it is the current one)");
+    // //// Neoffice — German stands in for a language outside the short list, French being in it now.
+    assert_eq!(caret_language(h.state()), "German (Germany)");
+    assert!(h.query(item("German (Germany)")).is_some(), "the current language is listed (only while it is the current one)");
     h.get(item("Language Preferences…")).click();
     h.run();
     assert!(h.state().ui.backstage, "File › Options opened");

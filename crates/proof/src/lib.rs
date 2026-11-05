@@ -56,6 +56,8 @@ pub mod cs;
 pub mod dict;
 pub mod en_variants;
 pub mod es;
+// //// Neoffice — added: French (module `fr`), with the Grammalecte dictionary built in.
+pub mod fr;
 pub mod hr;
 pub mod hunspell;
 pub mod hyphen;
@@ -176,7 +178,8 @@ struct Language {
 
 /// Every language proofed against a Hunspell dictionary, in the order File › Options › Proofing
 /// lists them. English has a built-in word list and is handled apart.
-static LANGUAGES: [Language; 12] = [
+// //// Neoffice — thirteen with French.
+static LANGUAGES: [Language; 13] = [
     Language {
         lang: ProofLang::Pl,
         slot: &pl::DICT,
@@ -275,6 +278,15 @@ static LANGUAGES: [Language; 12] = [
         suggest: es::suggest,
         grammar: |t, l, _| es::grammar::check(t, l),
     },
+    // //// Neoffice — French has no sentence-capital rule here, so a list item needs no exception.
+    Language {
+        lang: ProofLang::Fr,
+        slot: &fr::DICT,
+        message: "Faute d'orthographe possible",
+        is_correct: |w, _, o| fr::is_correct_with_options(w, o),
+        suggest: |w, n, _| fr::suggest(w, n),
+        grammar: |t, _, _| fr::grammar::check(t),
+    },
 ];
 
 /// `lang`'s row in [`LANGUAGES`]; `None` for English and the languages WordCraft doesn't proof.
@@ -297,6 +309,13 @@ pub fn set_dictionaries_folder(dir: Option<std::path::PathBuf>) {
 /// now (`None`: not installed, so the language has no spelling marks).
 pub fn installed_dictionaries() -> Vec<(ProofLang, Option<std::path::PathBuf>)> {
     LANGUAGES.iter().map(|l| (l.lang, l.slot.installed_path())).collect()
+}
+
+// //// Neoffice — added: a language may carry its own dictionary (French), used when none is installed.
+/// What the dictionary `lang` carries inside the program is (`Grammalecte 7.7 (MPL 2.0)`), used when none is installed, so
+/// `missing_dictionary` never names it; `None` for a language that carries none.
+pub fn builtin_dictionary(lang: ProofLang) -> Option<&'static str> {
+    language(lang)?.slot.builtin_label()
 }
 
 /// Why the dictionary found for `lang` failed to load (unsupported encoding, too large, a parse
@@ -1064,6 +1083,8 @@ mod tests {
             (ProofLang::Ru, "ru_RU"),
             (ProofLang::Cs, "cs_CZ"),
             (ProofLang::Id, "id_ID"),
+            // //// Neoffice — French.
+            (ProofLang::Fr, "fr_FR"),
             // #3360: each Spanish variety names its own.
             (ProofLang::Es, "es_ES"),
             (ProofLang::EsMx, "es_MX"),
@@ -1152,7 +1173,9 @@ mod tests {
                 ProofLang::Es,
                 ProofLang::EsMx,
                 ProofLang::Es419,
-                ProofLang::EsUy
+                ProofLang::EsUy,
+                // //// Neoffice — French carries its own dictionary: no file in this folder, so none reported.
+                ProofLang::Fr
             ]
         );
         for ((lang, path), name) in found.iter().zip(names) {
@@ -1746,8 +1769,13 @@ mod tests {
         for l in [None, Some(""), Some("  "), Some("en"), Some("en-US"), Some("en-GB"), Some("EN-us"), Some("en_US")] {
             assert!(has_dictionary(l), "{l:?}");
         }
-        for l in [Some("lt-LT"), Some("fr-FR"), Some("de"), Some("uk"), Some("-US"), Some("e")] {
+        // //// Neoffice — `fr-FR` is proofed now (the built-in French dictionary).
+        for l in [Some("lt-LT"), Some("ja-JP"), Some("de"), Some("uk"), Some("-US"), Some("e")] {
             assert!(!has_dictionary(l), "{l:?}");
+        }
+        // //// Neoffice — French is proofed: its tags have a dictionary.
+        for l in [Some("fr"), Some("fr-FR"), Some("fr-CH"), Some("fr_BE"), Some("fra")] {
+            assert!(has_dictionary(l), "{l:?}");
         }
         // The gate follows the dictionaries, not English: every proofed language is proofed.
         for d in ProofLang::PROOFED.map(ProofLang::code) {
@@ -1816,7 +1844,8 @@ mod tests {
     fn non_english_words_are_not_flagged() {
         for w in ["ąžuolas", "élève", "über", "labas", "bonjour"] {
             assert!(is_correct_for(w, Some("lt-LT")), "{w}");
-            assert!(is_correct_for(w, Some("fr-FR")), "{w}");
+            // //// Neoffice — `fr-FR` is proofed now: the same words are checked against the French dictionary.
+            assert!(is_correct_for(w, Some("ja-JP")), "{w}");
         }
         assert!(!is_correct_for("helo", Some("en-US")), "English typos still flagged");
         assert!(!is_correct_for("helo", None), "default language still proofed");
@@ -1922,7 +1951,8 @@ mod tests {
             let _ = has_dictionary(Some(&s));
             let _ = is_correct_for(&s, Some(&s));
             let _ = hyphen::hyphen_points(&s, &hyphen::Limits::default());
-            for lang in [ProofLang::En, ProofLang::EnGb, ProofLang::EnCa, ProofLang::Pl, ProofLang::Pt, ProofLang::It, ProofLang::Hr, ProofLang::Tr, ProofLang::Ru, ProofLang::Cs, ProofLang::Id, ProofLang::De, ProofLang::Es, ProofLang::EsMx, ProofLang::Es419, ProofLang::EsUy, ProofLang::Other] {
+            // //// Neoffice — French joins the languages the never-panics test checks.
+            for lang in [ProofLang::En, ProofLang::EnGb, ProofLang::EnCa, ProofLang::Pl, ProofLang::Pt, ProofLang::It, ProofLang::Hr, ProofLang::Tr, ProofLang::Ru, ProofLang::Cs, ProofLang::Id, ProofLang::De, ProofLang::Es, ProofLang::EsMx, ProofLang::Es419, ProofLang::EsUy, ProofLang::Fr, ProofLang::Other] {
                 let _ = check_spelling_in(&s, lang);
                 let _ = check_grammar_in(&s, lang);
                 let _ = is_correct_in(&s, lang);
@@ -1976,7 +2006,8 @@ mod tests {
 
         #[test]
         fn mixed_spans_never_panic(s in "\\PC{0,60}", cuts in proptest::collection::vec((0usize..80, 0usize..80, 0u8..15), 0..6)) {
-            let langs = [ProofLang::En, ProofLang::EnGb, ProofLang::EnCa, ProofLang::Pl, ProofLang::Pt, ProofLang::It, ProofLang::Tr, ProofLang::Ru, ProofLang::Cs, ProofLang::Id, ProofLang::Es, ProofLang::EsMx, ProofLang::Es419, ProofLang::EsUy, ProofLang::Other];
+            // //// Neoffice — French joins the languages the span test draws from.
+            let langs = [ProofLang::En, ProofLang::EnGb, ProofLang::EnCa, ProofLang::Pl, ProofLang::Pt, ProofLang::It, ProofLang::Tr, ProofLang::Ru, ProofLang::Cs, ProofLang::Id, ProofLang::Es, ProofLang::EsMx, ProofLang::Es419, ProofLang::EsUy, ProofLang::Fr, ProofLang::Other];
             let spans: Vec<(Range<usize>, ProofLang)> = cuts.iter().map(|&(a, b, l)| (a.min(b)..a.max(b), langs[l as usize % langs.len()])).collect();
             for i in check_text(&s, &spans) {
                 proptest::prop_assert!(i.start <= i.end && i.end <= s.len());

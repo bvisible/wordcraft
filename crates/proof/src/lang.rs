@@ -70,7 +70,14 @@ pub enum ProofLang {
     /// spelling). There is no German dictionary or grammar yet, so, as for [`ProofLang::Other`],
     /// no spelling or grammar marks.
     De,
-    /// A language without proofing tools here (`fr-FR`, `ja-JP`, `x-none`…). Like Word without
+    // //// Neoffice — French is proofed (it was `Other`): see `crate::fr`.
+    /// French (`fr`, `fr-FR`, `fr-CH`, `fr-BE`, `fr-CA`, `fr-LU`, `fr-MC`, also ISO 639-2 `fra` and
+    /// `fre`): one dictionary for every region, the one installed (`fr_FR`, `fr`…) or else the
+    /// Grammalecte dictionary built into the program, dictionary-driven suggestions with French
+    /// elisions, and generic checks with French messages ([`crate::fr`]). Hyphenation keeps the
+    /// fallback English patterns.
+    Fr,
+    /// A language without proofing tools here (`ja-JP`, `x-none`…). Like Word without
     /// the language's proofing tools: no spelling or grammar marks, so its words are never
     /// flagged as English misspellings. Hyphenation keeps using the English patterns, as before
     /// languages were told apart.
@@ -79,7 +86,8 @@ pub enum ProofLang {
 
 impl ProofLang {
     /// Every language with a spelling dictionary, in display order.
-    pub const PROOFED: [ProofLang; 15] = [
+    // //// Neoffice — `Fr` is appended, as each language was after the others.
+    pub const PROOFED: [ProofLang; 16] = [
         ProofLang::En,
         ProofLang::EnGb,
         ProofLang::EnCa,
@@ -95,6 +103,8 @@ impl ProofLang {
         ProofLang::EsMx,
         ProofLang::Es419,
         ProofLang::EsUy,
+        // //// Neoffice — French.
+        ProofLang::Fr,
     ];
 
     /// The proofing language of a BCP 47 tag (`pl-PL`, `en_GB`, `PL`…). The primary subtag
@@ -128,6 +138,9 @@ impl ProofLang {
             ProofLang::spanish(tag)
         } else if ["de", "deu", "ger"].iter().any(|c| primary.eq_ignore_ascii_case(c)) {
             ProofLang::De
+        // //// Neoffice — every French region (`fr-CH`, `fr-BE`, `fr-CA`…) shares the one dictionary.
+        } else if ["fr", "fra", "fre"].iter().any(|c| primary.eq_ignore_ascii_case(c)) {
+            ProofLang::Fr
         } else {
             ProofLang::Other
         }
@@ -167,7 +180,7 @@ impl ProofLang {
         matches!(self, ProofLang::Es | ProofLang::EsMx | ProofLang::Es419 | ProofLang::EsUy)
     }
 
-    /// The primary language subtag (`en`, `pl`, `bg`, `tr`, `ru`, `cs`, `id`, `de`, `es`); empty for [`ProofLang::Other`].
+    /// The primary language subtag (`en`, `pl`, `bg`, `tr`, `ru`, `cs`, `id`, `de`, `es`, `fr`); empty for [`ProofLang::Other`].
     pub fn code(self) -> &'static str {
         match self {
             ProofLang::En | ProofLang::EnGb | ProofLang::EnCa => "en",
@@ -182,6 +195,8 @@ impl ProofLang {
             ProofLang::Id => "id",
             ProofLang::Es | ProofLang::EsMx | ProofLang::Es419 | ProofLang::EsUy => "es",
             ProofLang::De => "de",
+            // //// Neoffice — French.
+            ProofLang::Fr => "fr",
             ProofLang::Other => "",
         }
     }
@@ -358,7 +373,21 @@ mod tests {
 
     #[test]
     fn tags_reject_unknown_or_partial_language_codes() {
-        assert_tags(&["fr-FR", "dex", "x-none", "ja-JP", "plx", "bgx", "trx", "csx", "idx", "inx", "esx", "spax", "e", "-"], ProofLang::Other);
+        // //// Neoffice — `fr-FR` is proofed now; `frx` and `fran` are not French.
+        assert_tags(&["dex", "x-none", "ja-JP", "plx", "bgx", "trx", "csx", "idx", "inx", "esx", "spax", "frx", "fran", "e", "-"], ProofLang::Other);
+    }
+
+    // //// Neoffice — French tags: every region is the one French.
+    #[test]
+    fn french_tags_resolve_to_one_language() {
+        assert_tags(
+            &["fr", "fr-FR", "FR_fr", "fr_FR.UTF-8", " fr-CH ", "fr-BE", "fr-CA", "fr-LU", "fr-MC", "fr-Latn-FR", "fra", "fre", "fr-x-private"],
+            ProofLang::Fr,
+        );
+        assert!(ProofLang::Fr.is_proofed() && ProofLang::PROOFED.contains(&ProofLang::Fr));
+        assert!(!ProofLang::Fr.is_english() && !ProofLang::Fr.is_spanish());
+        assert_eq!(ProofLang::Fr.code(), "fr");
+        assert_eq!(normalize_tag("FR_ch").as_deref(), Some("fr-CH"));
     }
 
     /// #3360, #3553: Spanish is proofed, by region: Spain (and no region), Mexico, Uruguay, and

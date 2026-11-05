@@ -110,7 +110,7 @@ Weights and evidence per area: [docs/target-app-parity.md](docs/target-app-parit
 | Spanish | es | partial | ~95% |
 | Hindi | hi | none | 0% |
 | Arabic | ar | none (document shaping and bidi work; no mirrored UI) | 0% |
-| French | fr | partial (interface complete, native-speaker reviewed; no proofing) | 100% (2,615 entries) |
+| French | fr | partial (interface complete, native-speaker reviewed; spelling from the built-in Grammalecte dictionary, no grammar) | 100% (2,615 entries)<!-- //// Neoffice — French is proofed; see docs/spelling-dictionaries.md --> |
 | Portuguese | pt-br (pt-PT none) | partial | ~95% |
 | Indonesian | id | none | 0% |
 | Japanese | ja | partial | ~95% |
@@ -122,7 +122,7 @@ Also shipped: Traditional Chinese (`zh-hant`), Ukrainian (`uk`), Serbian (`sr`, 
 system-locale selection and a saved language choice (Italian also has 51 strings none of the others had yet); Estonian proofing is not included. Hungarian (`hu`) has a
 complete 2,419-entry catalog, also without proofing. Vietnamese (`vi`, #1434) has a complete
 2,448-entry catalog, also without proofing. Croatian (`hr`, #1271) has a complete catalog.
-Proofing: English, Polish, Portuguese, Italian, Croatian, Turkish and Russian (spelling, grammar; hyphenation except Croatian), plus Czech, Indonesian and Spanish (system Hunspell spelling, generic checks; Spanish per variety: Spain, Mexico, Latin America, Uruguay), chosen per run from its language; Bulgarian and German hyphenation only. Word ships
+Proofing: English, Polish, Portuguese, Italian, Croatian, Turkish and Russian (spelling, grammar; hyphenation except Croatian), plus Czech, Indonesian and Spanish (system Hunspell spelling, generic checks; Spanish per variety: Spain, Mexico, Latin America, Uruguay) and French (spelling from the installed dictionary or the Grammalecte one built into the program, which is what the browser build uses; generic checks), chosen per run from its language; Bulgarian and German hyphenation only. Word ships <!-- //// Neoffice — French added to the proofing list -->
 30 interface languages and proofing for ~50. Detail: [docs/localization-parity.md](docs/localization-parity.md).
 
 ## Upcoming
@@ -140,6 +140,7 @@ Ranked, to beta (detail and remaining milestones in [docs/roadmap.md](docs/roadm
 
 ## Progress log
 
+- 2026-11-05: French spelling in the browser and on the desktop: the affix engine reads `FLAG long`, `FULLSTRIP`, `NEEDAFFIX`, `BREAK` and `OCONV`, the continuation classes of prefixes, and the Grammalecte dictionary (MPL 2.0) is built into the program, so French is checked where no dictionary folder is read; an installed `fr_FR`/`fr` still wins. A French interface writes the region's French (`fr-CH` on a Swiss system), including the blank document a hosting page hands over. Generic repeated-word and spacing checks explain in French; no French grammar or typography rules yet. <!-- //// Neoffice — French proofing -->
 - 2026-10-31: DOCX: a paragraph naming a style the file doesn't define is formatted as Normal, as in Word, not with the document defaults alone, so a Pandoc footer naming an undefined `Footer` style is as tall as Word's and no longer pushes the last paragraph to the next page (#5077). Readiness unchanged.
 - 2026-10-31: A table of contents writes its page numbers as `PAGEREF` fields to the headings' bookmarks, as Word does, so updating the fields in Word moves the numbers with the headings; they were plain text (#5097).
 - 2026-10-31: Keytips reach the Backstage: Alt, F badges its pages with Word's letters, and Alt, F, P (or V) opens Print (#4960).

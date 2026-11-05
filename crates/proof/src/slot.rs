@@ -2,7 +2,8 @@
 //! found on first use, replaced with [`DictSlot::install`] and forgotten with [`DictSlot::reload`].
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+// //// Neoffice — Mutex: the lock held while a dictionary is read.
+use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::affix::AffixDict;
 
@@ -41,6 +42,9 @@ pub(crate) trait Slot: Sync {
     fn has_dictionary(&self) -> bool;
     /// See [`DictSlot::reload`].
     fn reload(&self);
+    // //// Neoffice — a language may carry a dictionary inside the program (French; the browser build reads no folder).
+    /// See [`DictSlot::builtin_label`].
+    fn builtin_label(&self) -> Option<&'static str>;
 }
 
 impl<D: Dictionary> Slot for DictSlot<D> {
@@ -58,6 +62,11 @@ impl<D: Dictionary> Slot for DictSlot<D> {
 
     fn reload(&self) {
         DictSlot::reload(self);
+    }
+
+    // //// Neoffice — a language may carry a dictionary inside the program (French).
+    fn builtin_label(&self) -> Option<&'static str> {
+        DictSlot::builtin_label(self)
     }
 }
 
@@ -77,12 +86,41 @@ pub(crate) struct DictSlot<D> {
     names: &'static [&'static str],
     /// The language's English name, for the log.
     english: &'static str,
+    // //// Neoffice — the dictionary the program carries, used when no installed one is found or the installed one can't
+    // be read. Upstream reads installed files only, so on the web (no folder is read) every language but English had none.
+    builtin: Option<(&'static str, fn() -> Result<D, String>)>,
+    // //// Neoffice — held while the dictionary is read, so that threads which ask for it at once wait for one read instead of
+    // each parsing the same megabytes (French is 1.4 MB of text).
+    loading: Mutex<()>,
     state: RwLock<State<D>>,
 }
 
 impl<D: Dictionary> DictSlot<D> {
     pub(crate) const fn new(names: &'static [&'static str], english: &'static str) -> Self {
-        DictSlot { names, english, state: RwLock::new(State { dict: None, in_memory: false, reloads: 0 }) }
+        DictSlot { names, english, builtin: None, loading: Mutex::new(()), state: RwLock::new(State { dict: None, in_memory: false, reloads: 0 }) }
+    }
+
+    // //// Neoffice — added with `builtin`.
+    /// A slot whose language carries its own dictionary (`builtin` builds it, once, on first use; `label` says which it is,
+    /// for File › Options). An installed dictionary found by name is read instead, as for every language.
+    pub(crate) const fn with_builtin(
+        names: &'static [&'static str],
+        english: &'static str,
+        label: &'static str,
+        builtin: fn() -> Result<D, String>,
+    ) -> Self {
+        DictSlot {
+            names,
+            english,
+            builtin: Some((label, builtin)),
+            loading: Mutex::new(()),
+            state: RwLock::new(State { dict: None, in_memory: false, reloads: 0 }),
+        }
+    }
+
+    /// What the language's own dictionary is (`Grammalecte 7.7 (MPL 2.0)`), or `None` when it carries none.
+    pub(crate) fn builtin_label(&self) -> Option<&'static str> {
+        self.builtin.map(|(label, _)| label)
     }
 
     fn read(&self) -> RwLockReadGuard<'_, State<D>> {
@@ -107,6 +145,11 @@ impl<D: Dictionary> DictSlot<D> {
     /// The dictionary: the installed one (read on first use), one given with [`Self::install`], or
     /// an empty one when none is available (the language's spelling is off then).
     pub(crate) fn get(&self) -> Arc<D> {
+        if let Some(d) = self.read().dict.as_ref() {
+            return d.clone();
+        }
+        // //// Neoffice — one thread reads it; whoever came meanwhile finds it done (or reads again after a reload).
+        let _loading = self.loading.lock().unwrap_or_else(PoisonError::into_inner);
         let reloads = {
             let s = self.read();
             if let Some(d) = s.dict.as_ref() {
@@ -133,12 +176,29 @@ impl<D: Dictionary> DictSlot<D> {
         let Some((aff, dic)) = crate::hunspell::find(self.names) else {
             crate::hunspell::clear_load_error(name);
             log::info!("{} spelling: no Hunspell {name} dictionary installed", self.english);
-            return D::default();
+            // //// Neoffice — with no installed dictionary, the built-in one (French) or an empty one, as before.
+            return self.load_builtin();
         };
+        // //// Neoffice — an installed dictionary that can't be read leaves its reason behind (File › Options shows it) and
+        // the built-in one, if there is one, is used meanwhile.
         crate::hunspell::note_load(name, &dic, D::load(&aff, &dic)).unwrap_or_else(|e| {
             log::warn!("{} spelling: {e}", self.english);
-            D::default()
+            // //// Neoffice — an installed dictionary that can't be read leaves its reason, and the built-in one is used meanwhile.
+            self.load_builtin()
         })
+    }
+
+    // //// Neoffice — the dictionary a language carries, or an empty one for a language that has none.
+    /// The dictionary the language carries, or an empty one (no spelling marks) for a language that has none.
+    fn load_builtin(&self) -> D {
+        match self.builtin.map(|(_, build)| build()) {
+            Some(Ok(d)) => d,
+            Some(Err(e)) => {
+                log::warn!("{} spelling: the built-in dictionary: {e}", self.english);
+                D::default()
+            }
+            None => D::default(),
+        }
     }
 
     /// Use this dictionary from now on (Hunspell `.aff` and `.dic` text, decoded to UTF-8), for

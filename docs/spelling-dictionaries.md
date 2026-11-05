@@ -15,6 +15,12 @@ size limit, a parse error), the language isn't checked either, and the status ba
 
 Install a dictionary once, restart WordCraft, and the language is checked as you type.
 
+<!-- //// Neoffice — French is the exception: its dictionary is built into the program (the browser build reads no folder, so it is the only way to have French there). -->
+**French needs no installation.** The Grammalecte dictionary ("classique", Mozilla Public License 2.0; see
+`ATTRIBUTION.md`) is part of the program, and French is checked in the browser and on the desktop alike. A French
+dictionary installed in one of the folders below (`fr_FR`, `fr`…) is read instead of it. Reading it needs a dictionary
+in the format of this one: `FLAG long`, `FULLSTRIP` and `BREAK` included.
+
 ## Which files each language needs
 
 WordCraft looks for the first of these file names (each name means a `<name>.aff` and
@@ -30,13 +36,15 @@ WordCraft looks for the first of these file names (each name means a `<name>.aff
 | Croatian | `hr_HR`, `hr-HR`, `hr` | LibreOffice `dict-hr` |
 | Turkish | `tr_TR`, `tr-TR`, `tr` | LibreOffice `dict-tr` |
 | Indonesian | `id_ID`, `id-ID`, `id`, `in_ID` | LibreOffice `dict-id` |
+| French (built in; an installed one comes first) | `fr_FR`, `fr-FR`, `fr`, `fr_CH`, `fr_BE`, `fr_CA`, `fr_LU` | LibreOffice `dict-fr` (Grammalecte) <!-- //// Neoffice — French is built into the program, so it is the one row an installed file is optional for --> |
 | Spanish (Spain) | `es_ES`, `es-ES`, `es_ANY`, `es` | LibreOffice `dict-es` (RLA-ES) |
 | Spanish (Mexico) | `es_MX`, `es-MX`, `es_419`, `es-419`, `es_ANY`, `es` | LibreOffice `dict-es` (RLA-ES) |
 | Spanish (Latin America, and the other Spanish regions of the Americas) | `es_419`, `es-419`, `es_ANY`, `es`, `es_US`, `es_MX`, `es_AR`, `es-AR` | LibreOffice `dict-es` (RLA-ES) |
 | Spanish (Uruguay) | `es_UY`, `es-UY`, `es_AR`, `es-AR`, `es_419`, `es-419`, `es_ANY`, `es` | LibreOffice `dict-es` (RLA-ES) |
 
 Every Portuguese region uses the same `pt_BR` dictionary, so text marked *Português (Portugal)*
-is checked with it too.
+is checked with it too. So does every French region: *Français (Suisse)*, *(Belgique)* and *(Canada)* use the
+same dictionary as *Français (France)* (it has `septante`, `huitante`, `nonante` and `natel`). <!-- //// Neoffice — one French for every region -->
 
 Spanish has a dictionary per variety: text marked *Español (España)* uses `es_ES`, *Español
 (México)* `es_MX`, *Español (Uruguay)* `es_UY`, and *Español (Latinoamérica)* and the other

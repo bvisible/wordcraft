@@ -363,7 +363,10 @@ fn dictionaries(app: &mut WordApp, ui: &mut Ui) {
                 .into_iter()
                 .map(|(lang, dic)| {
                     let error = wordcraft_engine::proof::dictionary_load_error(lang);
-                    (language_name(lang).to_string(), dic.map(|d| d.to_string_lossy().into_owned()), error)
+                    // //// Neoffice — a language with a dictionary of its own (French) names it when none is installed.
+                    let dic =
+                        dic.map(|d| d.to_string_lossy().into_owned()).or_else(|| wordcraft_engine::proof::builtin_dictionary(lang).map(String::from));
+                    (language_name(lang).to_string(), dic, error)
                 })
                 .collect();
             ui.data_mut(|d| d.insert_temp(found_id, (generation, f.clone())));
@@ -398,6 +401,8 @@ fn language_name(lang: wordcraft_engine::proof::ProofLang) -> &'static str {
         ProofLang::EsMx => tl!("Spanish (Mexico)"),
         ProofLang::Es419 => tl!("Spanish (Latin America)"),
         ProofLang::EsUy => tl!("Spanish (Uruguay)"),
+        // //// Neoffice — one French for every region.
+        ProofLang::Fr => tl!("French"),
         // English uses its bundled word list; Bulgarian and German have no dictionary yet.
         ProofLang::En | ProofLang::EnGb | ProofLang::EnCa | ProofLang::Bg | ProofLang::De | ProofLang::Other => "",
     }

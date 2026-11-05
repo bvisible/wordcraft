@@ -8001,8 +8001,16 @@ fn unproofed_languages_and_no_proof_runs_are_not_marked() {
     let text = "Nous écrivons beaucoup aujourd'hui.";
     let mut d = Document::from_text(text);
     assert!(issues(&d) > 0, "French words are English misspellings in an English document");
+    // //// Neoffice — French is proofed now (the built-in Grammalecte dictionary): a language with no dictionary stands in for
+    // the old check, and French gets its own.
+    d.styles.default_chr.lang = Some("lt-LT".into());
+    assert_eq!(issues(&d), 0, "no dictionary: no marks");
     d.styles.default_chr.lang = Some("fr-FR".into());
-    assert_eq!(issues(&d), 0, "no French dictionary: no marks");
+    // //// Neoffice — French is proofed now: correct French is not flagged, a misspelled word is.
+    assert_eq!(issues(&d), 0, "correct French is not flagged");
+    let mut fr = Document::from_text("Nous écrivons baucoup aujourd'hui.");
+    fr.styles.default_chr.lang = Some("fr-FR".into());
+    assert_eq!(issues(&fr), 1, "one misspelled French word is marked");
     d.styles.default_chr.lang = Some("pl-PL".into());
     let mut pl = Document::from_text("Płynie żeka.");
     pl.styles.default_chr.lang = Some("pl-PL".into());

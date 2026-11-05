@@ -148,8 +148,26 @@ their own `//// Neoffice — added file` header.
   title and the loading text are ours in `apps/wordcraft-web/index.html`. Stored or compared names (storage folders,
   `WordCraft User`, `wordcraft:*` messages, `ai.storyteller.*`) and the native app keep upstream's.
 
+- **French spelling** (new directory `crates/proof/src/fr/`; marked changes in `crates/proof/src/lang.rs` (`ProofLang::Fr`, every
+  French region one language), `lib.rs` (the language table, `has_builtin_dictionary`) and `slot.rs`; the new data in
+  `assets/spelling/fr/`): French is proofed in the browser and on the desktop. The dictionary is Grammalecte's "classique" (MPL 2.0),
+  built into the program because the browser build reads no folder, kept byte for byte (only compressed, raw DEFLATE) with its
+  notice, and read like any installed Hunspell dictionary (`fr_FR`, `fr`… installed come first; a file that can't be read leaves
+  its reason and the built-in one is used). `DictSlot::with_builtin` carries it, and one thread reads a dictionary while the others
+  wait. **The engine commit is separate and generic** (`crates/proof/src/affix.rs`, `affix_suggest.rs`): `FLAG long` (the Indonesian
+  dictionary needs it too, upstream #5180), `FULLSTRIP`, `NEEDAFFIX` on stems, `CIRCUMFIX` accepted where its flag is unused,
+  `BREAK` (the parts of a hyphenated word; absent from the `.aff`, nothing breaks, as before), `OCONV` on the suggestions shown, and
+  the continuation classes of a prefix that license suffixes (`watts`); tests that used `FLAG long` as the example of a refused file
+  use `COMPOUNDFLAG` (marked, `cs`, `es`, `id`, `it`, `pl`, `pt`, `slot`). Suggestions add the French elision (`jai` → `j'ai`).
+  A French interface writes the region's French (`Session::region_french`, marked lines in `crates/ui-egui/src/app.rs`), and the
+  blank file a hosting page hands over, which says `en-US` (the Drive's new document), follows it
+  (`Session::adopt_editing_language_when_blank`, called from `drain_inbox` in `app/files.rs`); Review › Language lists French (France)
+  and (Switzerland) (`ribbon/language.rs`, `options.rs`), and `i18n/neoffice.rs` names the three menu entries upstream's catalogs lack
+  (Spanish (Latin America), Spanish (Uruguay), French (Switzerland)).
+
 ## Files that cannot carry a comment
 
 | File | Why it is ours |
 |---|---|
+| `assets/spelling/fr/fr.aff.deflate`, `assets/spelling/fr/fr.dic.deflate` | The Grammalecte French dictionary (MPL 2.0), compressed byte for byte; the built-in French dictionary (`crates/proof/src/fr/builtin.rs`). Source, licence and SHA-256 in `ATTRIBUTION.md`. |
 | `Cargo.lock` | Lists `craft-nora` and `craft-nora-ui` (git, from Neoffice's `craft-libs` fork) for the Nora pane. On a merge conflict, take upstream's file and run `cargo metadata`: cargo writes our two entries back. |

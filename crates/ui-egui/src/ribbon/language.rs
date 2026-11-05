@@ -1,7 +1,9 @@
 use super::{Ui, Value, WordApp, json, vec2};
 
 /// The proofing languages the Language menu offers: tag and English name (translated when drawn).
-pub(crate) const PROOFING_LANGUAGES: [(&str, &str); 16] = [
+// //// Neoffice — French (France and Switzerland) joins the short list, after the others as each language did; the other regions
+// (Belgium, Canada…) are in the Language dialog and share the same dictionary.
+pub(crate) const PROOFING_LANGUAGES: [(&str, &str); 18] = [
     ("en-US", "English (United States)"),
     ("en-GB", "English (United Kingdom)"),
     ("en-AU", "English (Australia)"),
@@ -18,6 +20,9 @@ pub(crate) const PROOFING_LANGUAGES: [(&str, &str); 16] = [
     ("es-MX", "Spanish (Mexico)"),
     ("es-419", "Spanish (Latin America)"),
     ("es-UY", "Spanish (Uruguay)"),
+    // //// Neoffice — French (France) and (Switzerland) join the short list.
+    ("fr-FR", "French (France)"),
+    ("fr-CH", "French (Switzerland)"),
 ];
 
 /// The English name of a proofing language tag, as the status bar shows it (no tag: WordCraft's
@@ -59,6 +64,8 @@ pub(crate) fn language_name(tag: Option<&str>) -> String {
             wordcraft_engine::proof::ProofLang::Cs => "Czech".into(),
             wordcraft_engine::proof::ProofLang::Id => "Indonesian".into(),
             wordcraft_engine::proof::ProofLang::Es => "Spanish (Spain)".into(),
+            // //// Neoffice — a bare `fr`: the French WordCraft proofs.
+            wordcraft_engine::proof::ProofLang::Fr => "French (France)".into(),
             wordcraft_engine::proof::ProofLang::De => "German (Germany)".into(),
             wordcraft_engine::proof::ProofLang::En if tag.eq_ignore_ascii_case("en") => "English (United States)".into(),
             _ => tag.to_string(),
@@ -199,6 +206,8 @@ pub(crate) fn language_menu(ui: &mut Ui, app: &mut WordApp) {
             || (tag == "cs-CZ" && wordcraft_engine::proof::ProofLang::from_tag(Some(&current)) == wordcraft_engine::proof::ProofLang::Cs)
             || (tag == "id-ID" && wordcraft_engine::proof::ProofLang::from_tag(Some(&current)) == wordcraft_engine::proof::ProofLang::Id)
             || (tag == "es-ES" && current.eq_ignore_ascii_case("es"))
+            // //// Neoffice — a bare `fr` checks French (France).
+            || (tag == "fr-FR" && current.eq_ignore_ascii_case("fr"))
             || (tag == "en-US" && current.eq_ignore_ascii_case("en"))
     };
     let checks = language_checks(&current, listed);
