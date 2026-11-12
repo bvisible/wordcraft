@@ -101,6 +101,7 @@ pub fn start() {
                     if let Some(control) = control {
                         app = app.with_control(control);
                     }
+                    // //// Neoffice — (upstream attaches the channel to every app: `WordApp::new(..).with_control(control)`.)
                     // Pasted pictures wait apart from dropped files: the app inserts one only when the page is the edit target (#1349).
                     app.services.pasted = Some(pasted);
                     app.autosave = false;
