@@ -170,10 +170,10 @@ their own `//// Neoffice — added file` header.
 - **French spelling, redone on upstream's `craft-proof`** (2026-11-12): upstream moved `crates/proof` out of the repository (v0.15.0) into
   craft-libs' `craft-proof`, and made French a downloaded Language pack (`fr.tar.zst`); a browser build can neither read a folder nor
   download. Our `crates/proof` is gone (the merge took upstream's deletion, our `fr/` module with it), and French is rebuilt on the new crate:
-  **`craft-proof` comes from Neoffice's craft-libs fork** (`Cargo.toml`, `wordcraft-proof`, revision `8435e5b`: upstream's `01315d9` plus
-  eight generic commits, described in that fork's `NEOFFICE_FORK_MARKERS.md`): dictionaries a program carries inside itself
+  **`craft-proof` comes from Neoffice's craft-libs fork** (`Cargo.toml`, `wordcraft-proof`, revision `2cc39ca`: upstream's `01315d9` plus
+  nine generic commits, described in that fork's `NEOFFICE_FORK_MARKERS.md`): dictionaries a program carries inside itself
   (`craft_proof::embedded::embed_dictionary`), the affix engine's `watts`, `L'ALLEMAGNE` and KEEPCASE-homonym fixes (`Bit`, `Bar`), `km²` and
-  `l'OTAN`, suggestions with an elision to correct (`dacord`) and the wrong part of a hyphenated word, and French repeated-word and
+  `l'OTAN`, suggestions with an elision (`jai` is `j'ai` first, `dacord` is `d'accord`) and the wrong part of a hyphenated word, and French repeated-word and
   spacing checks. Here: the new file `crates/engine/src/french.rs` embeds the dictionary (`assets/spelling/fr/`, Grammalecte's "classique",
   MPL 2.0, the originals byte for byte and compressed, `ATTRIBUTION.md`, `NOTICE`) and hands it over once, when the first `Session` is made
   (`Session::new`, marked); nothing is inflated or parsed before French is first checked. French stays `ProofLang::Pack("fr-xx")`; every

@@ -12,6 +12,9 @@ pub(crate) mod doc_state;
 pub mod file_access;
 // //// Neoffice — added: the French dictionary this build carries (a browser build downloads no Language pack).
 pub mod french;
+// //// Neoffice — added: the French spelling cases, run against the dictionary the build carries.
+#[cfg(test)]
+mod french_cases;
 pub(crate) mod ime;
 pub mod io;
 mod io_ext;

@@ -33,7 +33,7 @@ wordcraft-pdf = { path = "crates/pdf" }
 # inside itself (`embedded::embed_dictionary`, nothing read from a folder, nothing downloaded), the affix engine's `watts`, `L'ALLEMAGNE`
 # and KEEPCASE-homonym fixes, `km²` and `l'OTAN`, suggestions with an elision to correct, and French repeated-word and spacing checks.
 # To follow upstream's craft-proof, merge it into the fork and move this revision; drop the fork's commits when upstream has them.
-wordcraft-proof = { package = "craft-proof", git = "https://github.com/bvisible/craft-libs", rev = "8435e5b0a60af2f719e602e878cf31922c615f6e", version = "=0.1.0" }
+wordcraft-proof = { package = "craft-proof", git = "https://github.com/bvisible/craft-libs", rev = "2cc39ca32d6df52d8e81e7a2e21d4c3ff3550170", version = "=0.1.0" }
 craft-font-store = { git = "https://github.com/storytold/craft-libs", rev = "762a06a4c6b48b522b7d4de84a87917ef90265e6", version = "=0.1.0" }
 craft-font-catalog = { git = "https://github.com/storytold/craft-libs", rev = "762a06a4c6b48b522b7d4de84a87917ef90265e6", version = "=0.1.0" }
 wordcraft-engine = { path = "crates/engine" }
