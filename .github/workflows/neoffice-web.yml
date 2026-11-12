@@ -92,9 +92,10 @@ jobs:
             grep -q -a -F "$word" "$wasm" || { echo "::error::'$word' is not in $wasm: a language of the interface is missing"; exit 1; }
             echo "found: $word"
           done
-      # //// Neoffice — the browser reads no dictionary folder, so French is checked only because its dictionary is inside the
-      # program (crates/proof/src/fr/builtin.rs names it with this label). A build that dropped it would still start, and
-      # French would go unchecked without a word. The sizes are printed: they are what the dictionary costs.
+      # //// Neoffice — the browser reads no dictionary folder and downloads no Language pack, so French is checked only because its
+      # dictionary is inside the program (crates/engine/src/french.rs names it with this label, and hands it to craft-proof). A build
+      # that dropped it would still start, and French would go unchecked without a word. The sizes are printed: they are what the
+      # dictionary costs.
       - name: The French dictionary is in the build
         run: |
           set -euo pipefail

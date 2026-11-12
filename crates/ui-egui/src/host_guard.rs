@@ -20,7 +20,10 @@ use crate::{WordApp, i18n};
 /// document, or open another window. The engine opens documents in `cmd/file.rs`, `cmd/mailings/{labels,merge}.rs`,
 /// `cmd/tools/specs.rs` and `recovery.rs`, switches or closes them in `cmd/view.rs` and `cmd/file.rs`; the window is
 /// `view.newWindow`.
-const REFUSED: [&str; 11] = [
+// //// Neoffice — v0.18.1: the Language packs (`proof.packs`, `proof.installPack`, `proof.removePack`: they ask the pinned list or download a
+// pack, and a hosted editor downloads nothing) and the commands that arrange or pair the windows (`view.arrangeAll`, `view.sideBySide`,
+// `view.syncScroll`: the page's document is the only one, in the only window).
+const REFUSED: [&str; 17] = [
     // Open beside the others, or in place of an untouched blank one.
     "file.new",
     "file.open",
@@ -37,6 +40,14 @@ const REFUSED: [&str; 11] = [
     // Another window on the document, and the list of open documents (any of them, or none, the page's alone).
     "view.newWindow",
     "view.switchWindows",
+    // //// Neoffice — the windows are arranged and paired with each other (they are disabled in a browser, and refused here).
+    "view.arrangeAll",
+    "view.sideBySide",
+    "view.syncScroll",
+    // //// Neoffice — no Language pack is listed, downloaded or removed by an editor a page hosts: nothing leaves the page.
+    "proof.packs",
+    "proof.installPack",
+    "proof.removePack",
 ];
 
 /// Whether `id` with `params`, run by an editor whose hosting page opens the documents, would open, create, close or
@@ -276,7 +287,8 @@ mod tests {
     // alone.
     #[test]
     fn a_hosted_editor_refuses_every_command_that_opens_creates_closes_or_switches_documents() {
-        let refused: [(&str, Value); 22] = [
+        // //// Neoffice — v0.18.1 adds the window arrangements and the Language packs (a download and a list asked of the network).
+        let refused: [(&str, Value); 30] = [
             ("file.new", json!({})),
             ("file.new", json!({"template": "letter"})),
             ("file.open", json!({})),
@@ -299,6 +311,14 @@ mod tests {
             ("mailings.finish", json!({"from": 2, "to": 3})),
             ("mailings.printDocuments", json!({"from": 2})),
             ("review.combine", json!({"text": "Theirs", "showIn": "revised"})),
+            ("view.arrangeAll", json!({})),
+            ("view.sideBySide", json!({})),
+            ("view.sideBySide", json!({"value": true, "window": 2})),
+            ("view.syncScroll", json!({"value": true})),
+            ("proof.packs", json!({})),
+            ("proof.packs", json!({"refresh": true})),
+            ("proof.installPack", json!({"locale": "nl"})),
+            ("proof.removePack", json!({"locale": "nl"})),
         ];
         let (mut hosted_app, ..) = hosted("Le devis du client");
         let page = hosted_app.session.document_id();

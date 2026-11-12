@@ -9,7 +9,8 @@ use wordcraft_engine::Session;
 use wordcraft_ui_egui::async_saves::{AsyncSaves, SaveOutcome};
 use wordcraft_ui_egui::{Inbox, Services, WordApp};
 
-const DOC_EXTS: &[&str] = &["docx", "docm", "dotx", "dotm", "doc", "dot", "odt", "rtf", "txt", "md", "html", "htm", "tex", "json", "xml"];
+const DOC_EXTS: &[&str] =
+    &["docx", "docm", "dotx", "dotm", "doc", "dot", "odt", "ott", "fodt", "rtf", "txt", "md", "html", "htm", "mht", "mhtml", "tex", "json", "xml"];
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "wmf", "emf"];
 const RECIPIENT_EXTS: &[&str] = wordcraft_engine::cmd::mailings::RECIPIENT_EXTENSIONS;
 mod font_store;
@@ -31,6 +32,9 @@ pub fn start() {
         };
         // `?host=parent`: a same-origin page framing WordCraft opens documents in it and stores
         // what it saves (`host`). That page guards leaving it, so this one doesn't.
+        // //// Neoffice — upstream's v0.18 bridge is `craft-web-host`'s (`Bridge::detect(&canvas)`, which adds `data-host="page"`, a
+        // page that runs the editor in its own document); ours is kept: `wordcraft:saved`, the page's file id, the page's inbox and
+        // the flags a hosted editor sets (`host.rs`). A canvas with `data-host="page"` is not a hosted editor here.
         let bridge = if query_param("host").as_deref() == Some("parent") { crate::host::Bridge::new() } else { None };
         let app_bridge = bridge.clone();
         let dirty = Rc::new(Cell::new(false));
@@ -89,7 +93,13 @@ pub fn start() {
                     if let Some(origin) = &nora {
                         nora::connect(&mut services, origin.clone(), cc.egui_ctx.clone());
                     }
+                    // //// Neoffice — upstream installs `window.wordcraft` (a control channel) on every page; an editor a page hosts is
+                    // driven through its bridge alone (`api_policy`).
+                    let control = crate::api_policy::page_api_allowed(app_bridge.is_some()).then(|| crate::api::install(cc.egui_ctx.clone()));
                     let mut app = WordApp::new(session, services);
+                    if let Some(control) = control {
+                        app = app.with_control(control);
+                    }
                     // Pasted pictures wait apart from dropped files: the app inserts one only when the page is the edit target (#1349).
                     app.services.pasted = Some(pasted);
                     app.autosave = false;
@@ -726,6 +736,8 @@ fn mime_for(name: &str) -> &'static str {
         Some("pdf") => "application/pdf",
         Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         Some("odt") => "application/vnd.oasis.opendocument.text",
+        Some("ott") => "application/vnd.oasis.opendocument.text-template",
+        Some("fodt") => "application/vnd.oasis.opendocument.text-flat-xml",
         Some("rtf") => "application/rtf",
         Some("html") => "text/html",
         Some("md" | "txt") => "text/plain",

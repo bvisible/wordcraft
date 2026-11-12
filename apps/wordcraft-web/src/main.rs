@@ -9,8 +9,12 @@
 //! Preferences (theme, interface size, editing options…) are kept in `localStorage` (`prefs`).
 //! URL flags: `?webgl` forces WebGL2; `?sample` opens the sample document.
 //! `?host=parent` (inside an `<iframe>`) talks to a same-origin parent page instead: it sends the
-//! document to open and stores what WordCraft saves (`host`), and `&author=` names the user for
-//! comments and tracked changes.
+//! document to open and stores what WordCraft saves (`host`). A page can also host WordCraft in
+//! its own document (no iframe) with `data-host="page"` on the canvas, talking over DOM
+//! `CustomEvent`s on the canvas. `&author=` names the user for comments and tracked changes in
+//! either host mode.
+//! //// Neoffice — this fork keeps its own bridge (`host.rs`), `?host=parent` only: no `data-host="page"` mode, and no
+//! `window.wordcraft` command API in a hosted editor (`api_policy`).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -23,7 +27,12 @@ mod save_fallback;
 mod flags;
 #[cfg(any(target_arch = "wasm32", test))]
 mod nora_origin;
+// //// Neoffice — added module: when upstream's page command API may be installed (never in a hosted editor), tested natively.
+#[cfg(any(target_arch = "wasm32", test))]
+mod api_policy;
 
+#[cfg(target_arch = "wasm32")]
+mod api;
 #[cfg(target_arch = "wasm32")]
 mod host;
 #[cfg(target_arch = "wasm32")]

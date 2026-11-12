@@ -31,6 +31,8 @@ impl Session {
     /// Start an editing session at the document beginning with empty history and
     /// default view, preferences and a yellow highlighter independent of document undo.
     pub fn new(doc: Document) -> Self {
+        // //// Neoffice — the French dictionary the build carries is handed to the proofing crate (once; nothing is read yet).
+        crate::french::install();
         Self::with_registry(doc, Arc::new(crate::cmd::registry()))
     }
 
@@ -98,6 +100,7 @@ impl Session {
             pending_move,
             clipboard_text: String::new(),
             clipboard_html: String::new(),
+            clipboard_rtf: String::new(),
             clip_history: Default::default(),
             find,
             goal_x,
@@ -149,12 +152,14 @@ impl Session {
             math_latex: false,
             math_normal_text: false,
             also_selected,
+            member: None,
             prefs: Prefs::default(),
             system_region: Default::default(),
             keymap: crate::KeyMap::default(),
             ribbon: crate::RibbonLayout::default(),
             editing_lang: None,
             read_aloud: Default::default(),
+            windows: Default::default(),
             password,
             #[cfg(not(target_arch = "wasm32"))]
             recovery: None,

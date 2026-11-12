@@ -10,9 +10,10 @@ At the next upstream merge, `grep -rn "////"` in the source plus this file give 
 picture of what is ours and why.
 
 - **Upstream**: `storytold/wordcraft`, branch `main`.
-- **Base of the divergence**: `5cd53f184aab11def13b7fced18727159b9bc96a`, the tag `v0.14.0`, merged on 2026-11-02
-  (before: `9130181`, the tag `v0.10.0`, merged on 2026-10-23, and `a9afeb4`, upstream's `main` of 2026-10-14;
-  `version-15` was cut at the tag `v0.6.1`, `7dfa6b0`, on 2026-10-13). Move it at each upstream merge. The check works it out itself (the common ancestor with
+- **Base of the divergence**: `079f478bd85df7bcc567e3bafa7d7219096f9c3c`, the tag `v0.18.1` (`v0.18.0`, 2026-11-11, is the real version;
+  `v0.18.1`, 2026-11-12, only fixes Flatpak), merged on 2026-11-12 (before: `5cd53f184aab11def13b7fced18727159b9bc96a`, the tag `v0.14.0`, merged on 2026-11-02;
+  `9130181`, the tag `v0.10.0`, merged on 2026-10-23, and `a9afeb4`, upstream's `main` of 2026-10-14; `version-15` was cut at the tag `v0.6.1`,
+  `7dfa6b0`, on 2026-10-13). Move it at each upstream merge. The check works it out itself (the common ancestor with
   upstream's `main`), so this line is for the reader.
 
 ## What the fork adds
@@ -101,7 +102,15 @@ their own `//// Neoffice — added file` header.
 - **The host bridge of the browser build**: since v0.11.0 upstream ships the bridge itself
   (`apps/wordcraft-web/src/host.rs`, `?host=parent`, same origin: `wordcraft:ready`, `wordcraft:open`,
   `wordcraft:save` with its `saveAs`, `wordcraft:dirty`, `wordcraft:failed`, and `?author=`), the contract one host page (the
-  Drive of the Suite, NeoDesk's window) uses to drive every Craft editor. Ours is what it lacks, marked in that file
+  Drive of the Suite, NeoDesk's window) uses to drive every Craft editor. **Since v0.18.0 upstream's bridge is `craft-web-host`'s**
+  (storytold/craft-libs: the same messages for every Craft app, and a second mode, `data-host="page"`, DOM `CustomEvent`s on the
+  canvas, for a page that runs the editor in its own document): **we keep our own `host.rs`** (decision of 2026-11-12: its guarantees
+  are ours, `wordcraft:saved` above all, a save that is refused must never look saved), so `Bridge::detect(&canvas)` is not used, a
+  canvas with `data-host="page"` is not a hosted editor here, and `craft-web-host` stays in `apps/wordcraft-web/Cargo.toml`
+  (marked) unused by our code. **No page command API in a hosted editor**: upstream's `window.wordcraft` (`apps/wordcraft-web/src/api.rs`,
+  `craft-web-api`: `execute`, `commands`, `docInspect`, `uiInspect`, `screenshot`) is a control channel any script of the page can
+  call; `apps/wordcraft-web/src/api_policy.rs` (new file, tested natively, and a test reads `web.rs` to prove the install goes through
+  it) installs it only in an editor no page hosts. Ours is what the upstream bridge lacks, marked in that file
   (our own `apps/wordcraft-web/src/web/host.rs` is gone): `wordcraft:saved` (`ok: false` marks the
   document unsaved again and says why, a later `ok: true` marks it saved again when it has not changed since it was
   handed over: upstream's bridges have no answer to a save), the page's `id` for the file it opens, the page's files in an
@@ -133,7 +142,9 @@ their own `//// Neoffice — added file` header.
   upstream keeps several documents open and its own `discards_document` names `file.close` alone, so the guard stands on its
   own list (`switches_document`, new file `crates/ui-egui/src/host_guard.rs`): New, Open, Close, Close Document (by id),
   New from Template, Recover, Rename (v0.10.0: the next save would reach the page under another name), Switch Windows,
-  New Window, Labels, Print Documents, an envelope or a merge made in a new document, and a comparison shown in the
+  New Window, Arrange All, View Side by Side, Synchronous Scrolling (v0.18.1: they arrange and pair windows), the Language packs
+  (`proof.packs`, `proof.installPack`, `proof.removePack`: they ask the pinned list or download, and a hosted editor downloads nothing; in
+  a browser the engine refuses them already, the guard makes it so in every build), Labels, Print Documents, an envelope or a merge made in a new document, and a comparison shown in the
   revised or a new document (the page's document would become an untitled one) are refused with a status message (`run` in
   `crates/ui-egui/src/app/commands.rs`); a test runs each of them in a hosted editor and another scans the engine for a
   command that adds, replaces, switches or closes a document without being named. New Window, Switch Windows, Labels and
@@ -156,26 +167,30 @@ their own `//// Neoffice — added file` header.
   title and the loading text are ours in `apps/wordcraft-web/index.html`. Stored or compared names (storage folders,
   `WordCraft User`, `wordcraft:*` messages, `ai.storyteller.*`) and the native app keep upstream's.
 
-- **French spelling** (new directory `crates/proof/src/fr/`; marked changes in `crates/proof/src/lang.rs` (`ProofLang::Fr`, every
-  French region one language), `lib.rs` (the language table, `has_builtin_dictionary`) and `slot.rs`; the new data in
-  `assets/spelling/fr/`): French is proofed in the browser and on the desktop. The dictionary is Grammalecte's "classique" (MPL 2.0),
-  built into the program because the browser build reads no folder, kept byte for byte (only compressed, raw DEFLATE) with its
-  notice, and read like any installed Hunspell dictionary (`fr_FR`, `fr`… installed come first; a file that can't be read leaves
-  its reason and the built-in one is used). `DictSlot::with_builtin` carries it, and one thread reads a dictionary while the others
-  wait. **The engine commit is separate and generic** (`crates/proof/src/affix.rs`, `affix_suggest.rs`): `FLAG long` (the Indonesian
-  dictionary needs it too, upstream #5180), `FULLSTRIP`, `NEEDAFFIX` on stems, `CIRCUMFIX` accepted where its flag is unused,
-  `BREAK` (the parts of a hyphenated word; absent from the `.aff`, nothing breaks, as before), `OCONV` on the suggestions shown, and
-  the continuation classes of a prefix that license suffixes (`watts`); tests that used `FLAG long` as the example of a refused file
-  use `COMPOUNDFLAG` (marked, `cs`, `es`, `id`, `it`, `pl`, `pt`, `slot`). Suggestions add the French elision (`jai` → `j'ai`).
-  A French interface writes Switzerland's French unless the region is Belgium's, Canada's, Luxembourg's or Monaco's (`Session::region_french`, marked lines in `crates/ui-egui/src/app.rs`), and the
+- **French spelling, redone on upstream's `craft-proof`** (2026-11-12): upstream moved `crates/proof` out of the repository (v0.15.0) into
+  craft-libs' `craft-proof`, and made French a downloaded Language pack (`fr.tar.zst`); a browser build can neither read a folder nor
+  download. Our `crates/proof` is gone (the merge took upstream's deletion, our `fr/` module with it), and French is rebuilt on the new crate:
+  **`craft-proof` comes from Neoffice's craft-libs fork** (`Cargo.toml`, `wordcraft-proof`, revision `8435e5b`: upstream's `01315d9` plus
+  eight generic commits, described in that fork's `NEOFFICE_FORK_MARKERS.md`): dictionaries a program carries inside itself
+  (`craft_proof::embedded::embed_dictionary`), the affix engine's `watts`, `L'ALLEMAGNE` and KEEPCASE-homonym fixes (`Bit`, `Bar`), `km²` and
+  `l'OTAN`, suggestions with an elision to correct (`dacord`) and the wrong part of a hyphenated word, and French repeated-word and
+  spacing checks. Here: the new file `crates/engine/src/french.rs` embeds the dictionary (`assets/spelling/fr/`, Grammalecte's "classique",
+  MPL 2.0, the originals byte for byte and compressed, `ATTRIBUTION.md`, `NOTICE`) and hands it over once, when the first `Session` is made
+  (`Session::new`, marked); nothing is inflated or parsed before French is first checked. French stays `ProofLang::Pack("fr-xx")`; every
+  French region shares the one dictionary. The user's dictionaries folder is read before it; the French Language pack and the
+  system's dictionaries after it (a browser has neither). Marked changes in `crates/engine/src/packs.rs` (the row of Options › Language
+  says "Built in" for a language the build carries), `crates/ui-egui/src/options.rs` (the dictionary is listed with its name),
+  `crates/ui-egui/src/ribbon/language.rs` (French (France) and (Switzerland) join the short list; upstream's `short_languages` and the
+  menu's checks do the rest) and `crates/engine/Cargo.toml` (a dev-dependency). A French interface writes Switzerland's French unless the
+  region is Belgium's, Canada's, Luxembourg's or Monaco's (`Session::region_french`, marked lines in `crates/ui-egui/src/app.rs`), and the
   blank file a hosting page hands over, which says `en-US` (the Drive's new document), follows it
-  (`Session::adopt_editing_language_when_blank`, called from `drain_inbox` in `app/files.rs`); Review › Language lists French (France)
-  and (Switzerland) (`ribbon/language.rs`, `options.rs`), and `i18n/neoffice.rs` names the three menu entries upstream's catalogs lack
-  (Spanish (Latin America), Spanish (Uruguay), French (Switzerland)).
+  (`Session::adopt_editing_language_when_blank`, called from `drain_inbox` in `app/files.rs`); `i18n/neoffice.rs` names the three menu
+  entries upstream's catalogs lack (Spanish (Latin America), Spanish (Uruguay), French (Switzerland)). `neoffice-web.yml` fails when the
+  dictionary's label is not in the wasm.
 
 ## Files that cannot carry a comment
 
 | File | Why it is ours |
 |---|---|
-| `assets/spelling/fr/fr.aff.deflate`, `assets/spelling/fr/fr.dic.deflate` | The Grammalecte French dictionary (MPL 2.0), compressed byte for byte; the built-in French dictionary (`crates/proof/src/fr/builtin.rs`). Source, licence and SHA-256 in `ATTRIBUTION.md`. |
+| `assets/spelling/fr/fr.aff.deflate`, `assets/spelling/fr/fr.dic.deflate` | The Grammalecte French dictionary (MPL 2.0), compressed byte for byte; the French dictionary the build carries (`crates/engine/src/french.rs`). Source, licence and SHA-256 in `ATTRIBUTION.md`. |
 | `Cargo.lock` | Lists `craft-nora` and `craft-nora-ui` (git, from Neoffice's `craft-libs` fork) for the Nora pane. On a merge conflict, take upstream's file and run `cargo metadata`: cargo writes our two entries back. |

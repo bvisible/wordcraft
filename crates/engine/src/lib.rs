@@ -10,12 +10,15 @@ pub mod catalog;
 pub mod cmd;
 pub(crate) mod doc_state;
 pub mod file_access;
+// //// Neoffice — added: the French dictionary this build carries (a browser build downloads no Language pack).
+pub mod french;
 pub(crate) mod ime;
 pub mod io;
 mod io_ext;
 pub mod keymap;
 pub(crate) mod locale;
 pub mod math_gallery;
+pub mod packs;
 pub(crate) mod prefs;
 pub mod print;
 pub mod recovery;
@@ -24,6 +27,7 @@ pub mod sample;
 mod session;
 pub(crate) mod snapshot;
 pub mod speech;
+pub mod strict;
 pub(crate) mod view;
 
 use std::collections::HashMap;
