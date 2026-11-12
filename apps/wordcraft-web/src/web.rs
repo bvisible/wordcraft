@@ -96,6 +96,7 @@ pub fn start() {
                     // //// Neoffice — upstream installs `window.wordcraft` (a control channel) on every page; an editor a page hosts is
                     // driven through its bridge alone (`api_policy`).
                     let control = crate::api_policy::page_api_allowed(app_bridge.is_some()).then(|| crate::api::install(cc.egui_ctx.clone()));
+                    // //// Neoffice — the control channel is attached only when it was installed.
                     let mut app = WordApp::new(session, services);
                     if let Some(control) = control {
                         app = app.with_control(control);

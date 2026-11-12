@@ -1,3 +1,6 @@
+// //// Neoffice — added file (no upstream equivalent): our own host bridge. Since v0.18.0 upstream's `host.rs` is a thin layer on
+// `craft-web-host`, the bridge shared by the Craft apps; this file is the one the Neoffice hosts (the Suite's Drive, Neodesk's window) talk to,
+// with the answers to a save, the page's file id and the page's inbox that the shared bridge has no equivalent for (NEOFFICE_FORK_MARKERS.md).
 //! The `postMessage` bridge to a same-origin parent page (`?host=parent`), for pages that embed
 //! WordCraft in an `<iframe>` and keep its files (a Nextcloud app, a personal file server). The
 //! same messages as GridCraft's and PdfCraft's bridges; each is a plain object with a `type`:
