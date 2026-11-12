@@ -18,7 +18,7 @@ use crate::{WordApp, i18n};
 
 /// The commands a hosted editor refuses whatever their parameters are: they open, create, close or switch to another
 /// document, or open another window. The engine opens documents in `cmd/file.rs`, `cmd/mailings/{labels,merge}.rs`,
-/// `cmd/tools/specs.rs` and `recovery.rs`, switches or closes them in `cmd/view.rs` and `cmd/file.rs`; the window is
+/// `recovery.rs`, switches or closes them in `cmd/view.rs` and `cmd/file.rs`; the window is
 /// `view.newWindow`.
 // //// Neoffice — v0.18.1: the Language packs (`proof.packs`, `proof.installPack`, `proof.removePack`: they ask the pinned list or download a
 // pack, and a hosted editor downloads nothing) and the commands that arrange or pair the windows (`view.arrangeAll`, `view.sideBySide`,
@@ -383,14 +383,14 @@ mod tests {
             }
         }
         let expected: std::collections::BTreeMap<String, usize> = [
-            // file.new, file.open (set_document, add_opened_document, activate), file.closeDocument (close_document)
-            ("cmd/file.rs", 5),
+            // file.new, file.open (set_document, add_opened_document, activate), file.closeDocument (close_document), and, since
+            // v0.18 moved it here from `cmd/tools/specs.rs`, file.newFromTemplate (set_document, add_document)
+            // //// Neoffice — 7 and no `specs.rs` row: the same commands, one place fewer.
+            ("cmd/file.rs", 7),
             // mailings.envelopes, mailings.labels
             ("cmd/mailings/labels.rs", 2),
             // mailings.finish, mailings.printDocuments
             ("cmd/mailings/merge.rs", 1),
-            // file.newFromTemplate
-            ("cmd/tools/specs.rs", 1),
             // view.switchWindows
             ("cmd/view.rs", 1),
             // file.recover

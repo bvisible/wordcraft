@@ -101,6 +101,8 @@ const COMPLETE_CATALOGS: &[(&str, &[(&str, &str)])] = &[
     ("hr", &[("Assistant", "Asistent"), ("Show the Nora assistant pane (experimental)", "Prikaži okno asistenta Nora (eksperimentalno)")]),
     ("pl", &[("Assistant", "Asystent"), ("Show the Nora assistant pane (experimental)", "Pokaż panel asystenta Nora (eksperymentalny)")]),
     ("sl", &[("Assistant", "Pomočnik"), ("Show the Nora assistant pane (experimental)", "Prikaži podokno pomočnika Nora (eksperimentalno)")]),
+    // //// Neoffice — Arabic (Haiku, 12.11.2026).
+    ("ar", &[("Assistant", "المساعد"), ("Show the Nora assistant pane (experimental)", "إظهار لوحة مساعد Nora (تجريبي)")]),
 ];
 
 /// What the pane says under a request lost to a tab in the background (craft-libs `ResumeWords`), and its button.
@@ -134,6 +136,8 @@ const RESUME_WORDS: &[(&str, &str, &str)] = &[
     ("ko", "이 탭이 백그라운드에 있어서 Nora가 문서에서 작업할 수 없었습니다.", "재개"),
     ("zh-hans", "此标签页处于后台：Nora 无法在文档中执行操作。", "恢复"),
     ("zh-hant", "此分頁位於背景：Nora 無法在文件中執行操作。", "恢復"),
+    // //// Neoffice — Arabic joined the interface in v0.18.0 (translated by Haiku, 12.11.2026, like the others).
+    ("ar", "كانت علامة التبويب هذه في الخلفية: لم تتمكن Nora من التصرف في المستند.", "متابعة"),
 ];
 
 /// What the pane says of a reply whose turn could not act in the document in time (craft-libs `CorrectionWords`): nothing
@@ -263,6 +267,12 @@ const CORRECTION_WORDS: &[(&str, &str, &str)] = &[
     ),
     ("zh-hans", "文档中未执行任何操作：Nora 未能及时在文档中操作。如仍需要，请重新提出请求。", "并非全部完成：部分操作未能及时在文档中执行。"),
     ("zh-hant", "文件中未執行任何操作：Nora 未能及時在文件中操作。如仍需要，請重新提出請求。", "並非全部完成：部分操作未能及時在文件中執行。"),
+    // //// Neoffice — Arabic (Haiku, 12.11.2026).
+    (
+        "ar",
+        "لم يُنجز شيء في المستند: لم تتمكن Nora من التصرف فيه في الوقت المناسب. أعد الطلب إن كنت ما زلت بحاجة إليه.",
+        "لم يُنجَز كل شيء: تعذّر تنفيذ جزء منه في المستند في الوقت المناسب.",
+    ),
 ];
 
 /// The words of Nora's button in the title bar, which opens and closes her pane (craft-libs `LauncherWords`): its label,
@@ -297,6 +307,8 @@ const BUTTON_WORDS: &[(&str, &str, &str)] = &[
     ("ko", "Nora에게 문의", "Nora, Neoffice 어시스턴트"),
     ("zh-hans", "询问 Nora", "Nora，Neoffice 助手"),
     ("zh-hant", "詢問 Nora", "Nora，Neoffice 助理"),
+    // //// Neoffice — Arabic (Haiku, 12.11.2026).
+    ("ar", "اسأل Nora", "Nora، مساعد Neoffice"),
 ];
 
 /// Names in the Language menu that upstream's catalogs have no row for: the two Spanishes of the Americas (shown in English in

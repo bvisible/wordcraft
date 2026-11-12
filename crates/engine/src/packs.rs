@@ -746,7 +746,9 @@ pub fn missing(s: &Session) -> Vec<Pack> {
     let installed = installed();
     let mut out: Vec<Pack> = Vec::new();
     for tag in wanted_languages(s) {
+        // //// Neoffice — a language the build carries a dictionary for (French in NeoDoc) has nothing to install.
         if proofable(&tag)
+            && wordcraft_proof::embedded::label(wordcraft_proof::ProofLang::from_tag(Some(&tag))).is_none()
             && let Some(p) = pack_for_tag(&tag, &packs)
             && !installed.iter().any(|i| i.locale == p.locale)
             && !out.iter().any(|o| o.locale == p.locale)

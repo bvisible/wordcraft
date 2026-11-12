@@ -420,7 +420,9 @@ fn dictionary_files(ui: &mut Ui) {
             let mut f = f;
             let french = wordcraft_engine::proof::ProofLang::from_tag(Some("fr"));
             if let Some(label) = wordcraft_engine::proof::embedded::label(french) {
-                f.push((tl!("French").to_string(), Some(label), wordcraft_engine::proof::dictionary_load_error(french)));
+                // A dictionary in the folder the person set is read instead of the one the build carries.
+                let file = wordcraft_engine::proof::pack_dictionary_file(french).map(|d| d.to_string_lossy().into_owned()).unwrap_or(label);
+                f.push((tl!("French").to_string(), Some(file), wordcraft_engine::proof::dictionary_load_error(french)));
             }
             ui.data_mut(|d| d.insert_temp(found_id, (generation, f.clone())));
             f

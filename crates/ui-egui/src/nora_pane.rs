@@ -141,6 +141,12 @@ const THE_PERSON_S: &[&str] = &[
     "font.add",
     "font.remove",
     "font.loadSystem",
+    // //// Neoffice — v0.18: the Language packs download (the person's click turns downloading on; a hosted editor refuses them too) and
+    // Set as Default Language saves the language for the person's future documents.
+    "proof.packs",
+    "proof.installPack",
+    "proof.removePack",
+    "review.language.preferred",
 ];
 
 /// What Nora may play in a WordCraft document, as far as the conversation decides it: everything but
@@ -1217,7 +1223,8 @@ mod tests {
         let mut a = app(Services::default());
         type_in(&mut a, "Rapport à envoyer");
         let answer = run(&mut a, DocActionKind::ExportFile).unwrap();
-        assert_eq!(answer["name"], "Document1.docx");
+        // //// Neoffice — v0.18 names a document never saved after its first words, as Word suggests them (#5793).
+        assert_eq!(answer["name"], "Rapport à envoyer.docx");
         let data = answer["data"].as_str().unwrap_or_default();
         assert!(data.starts_with("UEsDB"), "a Word package (a zip), in base64");
         assert_eq!(text_of(&mut a), "Rapport à envoyer", "the document is left as it was");
@@ -1969,7 +1976,11 @@ mod tests {
         // `mailings.printDocuments` makes a document of its own, which `replaces_the_document` refuses; `design.scaleFontSizes`,
         // `equation.deleteSurrounding` and the record navigation of the mail merge (`mailings.first`, `mailings.last`,
         // `mailings.goToRecord`, as `mailings.nextRecord` before them) are Nora's.
-        assert_eq!(ids.len(), 648, "WordCraft's commands changed: decide which new ones are the person's, then update this count");
+        // //// Neoffice — v0.18.1 (671): twenty-three new. `file.strictReport` and `view.arrangeAll`, `view.sideBySide`, `view.syncScroll`,
+        // `view.paperColor` are refused by their family; the Language packs (`proof.packs`, `proof.installPack`, `proof.removePack`) and
+        // Set as Default Language (`review.language.preferred`) are the person's by name; the others (`font.missing`, `format.emphasisMark`, the
+        // eight `para.*` clean-ups, `select.member`, `smartArt.itemColor`, `text.deleteSentenceBack`) are Nora's.
+        assert_eq!(ids.len(), 671, "WordCraft's commands changed: decide which new ones are the person's, then update this count");
         for entry in THE_PERSON_S {
             let known = match entry.strip_suffix('*') {
                 Some(prefix) => ids.iter().any(|id| id.starts_with(prefix)),
@@ -2033,6 +2044,11 @@ mod tests {
             "font.add",
             "font.remove",
             "font.loadSystem",
+            // //// Neoffice — v0.18 (see THE_PERSON_S).
+            "proof.packs",
+            "proof.installPack",
+            "proof.removePack",
+            "review.language.preferred",
         ];
         for id in &ids {
             let expected = families.iter().any(|family| id.starts_with(family)) || theirs.contains(id);

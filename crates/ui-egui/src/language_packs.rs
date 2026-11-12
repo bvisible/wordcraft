@@ -178,6 +178,10 @@ pub(crate) fn language_of(pack_locale: &str, endonym: &str) -> String {
 /// they go; when one ends, the bar works out again what to offer. (Every open document is
 /// proofed again by itself: its layout follows the dictionaries' generation.)
 pub(crate) fn tick(app: &mut WordApp) {
+    // //// Neoffice — an editor a page hosts downloads no Language pack and asks for no list, whatever the build can do.
+    if app.host_owns_documents() {
+        return;
+    }
     if !packs::runs_in_background()
         && packs::backend().is_some()
         && let Some(ctx) = app.ctx.clone()
@@ -218,6 +222,10 @@ fn error_of(app: &WordApp, locale: &str) -> Option<String> {
 /// Downloading on for a click on Install, Add a language… or Refresh: the person's
 /// consent. A click the control channel made (an agent's `click`) leaves it off and says why.
 fn consent(app: &mut WordApp, ctx: &egui::Context, key: &str) -> bool {
+    // //// Neoffice — nothing is downloaded for an editor a page hosts: no click turns downloading on there.
+    if app.host_owns_documents() {
+        return false;
+    }
     let Some(backend) = packs::backend() else { return false };
     if backend.network_on() {
         return true;
@@ -315,7 +323,8 @@ fn start_get(app: &mut WordApp, ctx: &egui::Context, tag: &str) {
 /// for the first language of the document with an available pack that isn't installed. Closing it
 /// hides it for that language in this document. Never shown for a language with no pack.
 pub(crate) fn bar(app: &mut WordApp, ui: &mut Ui) {
-    if packs::backend().is_none() {
+    // //// Neoffice — no bar offering a download in an editor a page hosts.
+    if packs::backend().is_none() || app.host_owns_documents() {
         return;
     }
     let document = app.session.document_id();
@@ -548,10 +557,14 @@ pub(crate) fn your_languages_section(app: &mut WordApp, ui: &mut Ui) {
         .weak(),
     );
     ui.add_space(4.0);
-    let backend = packs::backend();
+    // //// Neoffice — no store for an editor a page hosts: nothing is downloaded there.
+    let backend = if app.host_owns_documents() { None } else { packs::backend() };
     if backend.is_none() {
         let why = if cfg!(target_arch = "wasm32") {
             tl!("Language packs aren't available in the browser.")
+        } else if app.host_owns_documents() {
+            // //// Neoffice — the reason for the editor a page hosts.
+            tl!("Language packs aren't offered by the page that hosts this editor.")
         } else {
             tl!("Language packs need the font store folder, and there is none on this computer.")
         };

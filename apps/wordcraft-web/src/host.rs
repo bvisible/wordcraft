@@ -225,14 +225,23 @@ fn string(data: &JsValue, key: &str) -> Option<String> {
     js_sys::Reflect::get(data, &JsValue::from_str(key)).ok()?.as_string()
 }
 
-/// `bytes` as an `ArrayBuffer` or `Uint8Array`.
+/// The largest document taken from the page, refused before it is copied into the app's memory (the length of the page's own
+/// bytes, not a claim): upstream's shared bridge (`craft-web-host`) has the same limit since v0.18.0.
+const MAX_OPEN_BYTES: u32 = 512 << 20;
+
+/// `bytes` as an `ArrayBuffer` or `Uint8Array`, unless it is over [`MAX_OPEN_BYTES`].
 fn bytes(data: &JsValue) -> Option<Vec<u8>> {
     let bytes = js_sys::Reflect::get(data, &JsValue::from_str("bytes")).ok()?;
-    if let Some(array) = bytes.dyn_ref::<js_sys::Uint8Array>() {
-        Some(array.to_vec())
-    } else if bytes.is_instance_of::<js_sys::ArrayBuffer>() {
-        Some(js_sys::Uint8Array::new(&bytes).to_vec())
+    let length = if let Some(array) = bytes.dyn_ref::<js_sys::Uint8Array>() {
+        array.length()
+    } else if let Some(buffer) = bytes.dyn_ref::<js_sys::ArrayBuffer>() {
+        buffer.byte_length()
     } else {
-        None
+        return None;
+    };
+    if length > MAX_OPEN_BYTES {
+        log::warn!("the page's file is {length} bytes, over the {} MiB limit: not opened", MAX_OPEN_BYTES >> 20);
+        return None;
     }
+    if let Some(array) = bytes.dyn_ref::<js_sys::Uint8Array>() { Some(array.to_vec()) } else { Some(js_sys::Uint8Array::new(&bytes).to_vec()) }
 }
