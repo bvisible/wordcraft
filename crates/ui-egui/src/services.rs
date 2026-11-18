@@ -130,6 +130,11 @@ pub struct Services {
     // these open with the guard of `host_owns_documents` lifted.
     /// The files a hosting page sends to be the document, delivered asynchronously like [`Services::inbox`].
     pub host_inbox: Option<Inbox>,
+    // //// Neoffice — the hosting page hears that its file did not open: it says so and offers the file, rather than leave
+    // //// the empty document on its page (a .doc the reader refused showed as « Document1 », 0 words, in the Drive).
+    /// Web: told when a file of [`Services::host_inbox`] did not open, with its name and the reason. A file that asks
+    /// for its password is not told, nor later when the password dialog is cancelled or refuses the password.
+    pub host_open_failed: Option<Box<dyn Fn(&str, &str)>>,
     /// Desktop: write the app's current preferences out now, not only at exit (#2716): a
     /// document taken off the recent list should survive the app being killed before a normal
     /// close. `Ok(true)`: written; `Ok(false)`: nothing written because the host keeps no

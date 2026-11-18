@@ -166,6 +166,27 @@ mod tests {
         (WordApp::new(Session::new(wordcraft_doc::Document::from_text(text)), services), inbox, host_inbox)
     }
 
+    // //// Neoffice — Services::host_open_failed: the page hears of its file that did not open, and of nothing else.
+    #[test]
+    fn a_file_of_the_page_that_does_not_open_is_told_to_the_page() {
+        let (mut a, inbox, host_inbox) = hosted("Le devis du client");
+        let told: std::rc::Rc<std::cell::RefCell<Vec<(String, String)>>> = Default::default();
+        let sink = told.clone();
+        a.services.host_open_failed = Some(Box::new(move |name: &str, error: &str| sink.borrow_mut().push((name.into(), error.into()))));
+        let before = a.session.document_id();
+        host_inbox.lock().unwrap().push(("Rapport.doc".into(), b"not a Word document at all".to_vec()));
+        a.drain_inbox();
+        assert_eq!(a.session.document_id(), before, "nothing replaced the document");
+        assert_eq!(told.borrow().len(), 1);
+        assert_eq!(told.borrow()[0].0, "Rapport.doc");
+        assert!(!told.borrow()[0].1.is_empty(), "the reason is given");
+        // A file that opens, and a file the person dropped, are not told.
+        host_inbox.lock().unwrap().push(("Page.txt".into(), b"Le texte que la page donne.\n".to_vec()));
+        inbox.lock().unwrap().push(("Picked.doc".into(), b"not a Word document either".to_vec()));
+        a.drain_inbox();
+        assert_eq!(told.borrow().len(), 1);
+    }
+
     // A text file opened under a hosting page is saved as text, and the document counts as saved; every other format
     // still becomes a Word document, and a page that does not host the editor changes nothing.
     #[test]

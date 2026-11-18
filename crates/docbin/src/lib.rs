@@ -188,9 +188,17 @@ pub fn is_encrypted(bytes: &[u8]) -> bool {
 }
 
 /// Open the compound file around a `.doc`, after [`wordcraft_doc::cfb_guard::check`].
-fn open_container(bytes: &[u8]) -> Result<cfb::CompoundFile<std::io::Cursor<&[u8]>>, DocbinError> {
+// //// Neoffice — and when `cfb` refuses it, once more with a MiniFAT no stream uses marked free
+// //// (cfb_guard::repair_unused_minifat): macOS's `textutil -convert doc` leaves one full of zeros, and such a .doc opened
+// //// as an empty document. The error is the first one when the repaired copy does not open either.
+fn open_container(bytes: &[u8]) -> Result<cfb::CompoundFile<std::io::Cursor<std::borrow::Cow<'_, [u8]>>>, DocbinError> {
     wordcraft_doc::cfb_guard::check(bytes).map_err(DocbinError::Container)?;
-    cfb::CompoundFile::open(std::io::Cursor::new(bytes)).map_err(|e| DocbinError::Container(e.to_string()))
+    match cfb::CompoundFile::open(std::io::Cursor::new(std::borrow::Cow::Borrowed(bytes))) {
+        Ok(comp) => Ok(comp),
+        Err(e) => wordcraft_doc::cfb_guard::repair_unused_minifat(bytes)
+            .and_then(|repaired| cfb::CompoundFile::open(std::io::Cursor::new(std::borrow::Cow::Owned(repaired))).ok())
+            .ok_or_else(|| DocbinError::Container(e.to_string())),
+    }
 }
 
 /// Read a `.doc` (Word 97-2003 binary) file into a [`Document`]. A password-protected file

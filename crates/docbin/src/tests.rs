@@ -149,6 +149,137 @@ fn body_texts(doc: &wordcraft_doc::Document) -> Vec<String> {
     doc.body.iter().filter_map(|b| b.as_para().map(|p| p.text.clone())).collect()
 }
 
+// //// Neoffice — a .doc laid out as macOS's `textutil -convert doc` writes it: version 3, every stream at least the cutoff
+// //// (4096 bytes, so in regular sectors), a root mini stream of two mini sectors that nothing uses, and a MiniFAT sector
+// //// of zeros. `cfb` refuses it as it is; the reader opens it (open_container, cfb_guard::repair_unused_minifat).
+fn with_unused_minifat_of_zeros(file: &[u8]) -> Vec<u8> {
+    const S: usize = 512;
+    const FREE: u32 = 0xFFFF_FFFF;
+    const END: u32 = 0xFFFF_FFFE;
+    const FAT_SECTOR: u32 = 0xFFFF_FFFD;
+    let mut comp = cfb::CompoundFile::open(std::io::Cursor::new(file)).expect("container");
+    let pad = |mut data: Vec<u8>| {
+        data.resize(data.len().max(4096).div_ceil(S) * S, 0);
+        data
+    };
+    let word = pad(crate::stream(&mut comp, "WordDocument").expect("WordDocument"));
+    let table = pad(crate::stream(&mut comp, "0Table").expect("0Table"));
+    // Sectors: 0 the FAT, 1 the directory, 2 the MiniFAT, 3 the mini stream, then WordDocument, then 0Table.
+    let word_at = 4u32;
+    let table_at = word_at + (word.len() / S) as u32;
+    let sectors = table_at as usize + table.len() / S;
+    let mut f = vec![0u8; S * (sectors + 1)];
+    let put = |f: &mut Vec<u8>, at: usize, v: &[u8]| f[at..at + v.len()].copy_from_slice(v);
+    put(&mut f, 0, &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]);
+    put(&mut f, 0x18, &0x3Eu16.to_le_bytes());
+    put(&mut f, 0x1A, &3u16.to_le_bytes());
+    put(&mut f, 0x1C, &0xFFFEu16.to_le_bytes());
+    put(&mut f, 0x1E, &9u16.to_le_bytes());
+    put(&mut f, 0x20, &6u16.to_le_bytes());
+    put(&mut f, 0x2C, &1u32.to_le_bytes()); // one FAT sector
+    put(&mut f, 0x30, &1u32.to_le_bytes()); // the directory
+    put(&mut f, 0x38, &4096u32.to_le_bytes());
+    put(&mut f, 0x3C, &2u32.to_le_bytes()); // the MiniFAT
+    put(&mut f, 0x40, &1u32.to_le_bytes());
+    put(&mut f, 0x44, &END.to_le_bytes());
+    for i in 0..109usize {
+        put(&mut f, 0x4C + i * 4, &(if i == 0 { 0 } else { FREE }).to_le_bytes());
+    }
+    let sector = |s: u32| (s as usize + 1) * S;
+    let mut fat = vec![FREE; S / 4];
+    fat[0] = FAT_SECTOR;
+    fat[1] = END;
+    fat[2] = END;
+    fat[3] = END;
+    for (first, len) in [(word_at, word.len() / S), (table_at, table.len() / S)] {
+        for k in 0..len as u32 {
+            fat[(first + k) as usize] = if k + 1 == len as u32 { END } else { first + k + 1 };
+        }
+    }
+    let fat_bytes: Vec<u8> = fat.iter().flat_map(|e| e.to_le_bytes()).collect();
+    put(&mut f, sector(0), &fat_bytes);
+    // The directory: the root (its mini stream, two mini sectors), WordDocument, and 0Table its left sibling.
+    let entry = |f: &mut Vec<u8>, id: usize, name: &str, kind: u8, left: u32, child: u32, start: u32, size: u32| {
+        let at = sector(1) + id * 128;
+        let units: Vec<u8> = name.encode_utf16().chain([0]).flat_map(|u| u.to_le_bytes()).collect();
+        put(f, at, &units);
+        put(f, at + 64, &(units.len() as u16).to_le_bytes());
+        f[at + 66] = kind;
+        f[at + 67] = 1; // black
+        put(f, at + 68, &left.to_le_bytes());
+        put(f, at + 72, &FREE.to_le_bytes());
+        put(f, at + 76, &child.to_le_bytes());
+        put(f, at + 116, &start.to_le_bytes());
+        put(f, at + 120, &size.to_le_bytes());
+    };
+    entry(&mut f, 0, "Root Entry", 5, FREE, 1, 3, 128);
+    entry(&mut f, 1, "WordDocument", 2, 2, FREE, word_at, word.len() as u32);
+    entry(&mut f, 2, "0Table", 2, FREE, FREE, table_at, table.len() as u32);
+    for id in 3..4 {
+        let at = sector(1) + id * 128;
+        put(&mut f, at + 68, &FREE.to_le_bytes());
+        put(&mut f, at + 72, &FREE.to_le_bytes());
+        put(&mut f, at + 76, &FREE.to_le_bytes());
+    }
+    // sector 2, the MiniFAT, stays all zeros; sector 3, the mini stream, too
+    put(&mut f, sector(word_at), &word);
+    put(&mut f, sector(table_at), &table);
+    f
+}
+
+#[test]
+fn a_doc_whose_minifat_nobody_uses_is_zeros_opens_with_its_text() {
+    let doc = text_doc(&[Piece { compressed: true, text: "Budget 2026\r".into() }], &[], 0);
+    let file = with_unused_minifat_of_zeros(&doc);
+    assert!(cfb::CompoundFile::open(std::io::Cursor::new(&file[..])).is_err(), "cfb refuses the file as it is");
+    let read = read(&file).expect("the document opens");
+    assert_eq!(body_texts(&read), body_texts(&super::read(&doc).expect("the original opens")));
+    assert!(read.word_count() >= 2);
+}
+
+#[test]
+fn a_stream_one_byte_under_the_cutoff_keeps_the_minifat_as_it_is() {
+    // The 0Table entry says 4095 bytes: a stream of the mini stream, whose chains are in the MiniFAT.
+    let doc = text_doc(&[Piece { compressed: true, text: "Budget\r".into() }], &[], 0);
+    let mut file = with_unused_minifat_of_zeros(&doc);
+    let table_entry = 2 * 512 + 2 * 128;
+    file[table_entry + 120..table_entry + 124].copy_from_slice(&4095u32.to_le_bytes());
+    assert_eq!(wordcraft_doc::cfb_guard::repair_unused_minifat(&file), None);
+}
+
+#[test]
+fn a_broken_textutil_like_file_never_panics_the_repair_or_the_reader() {
+    let doc = text_doc(&[Piece { compressed: true, text: "Budget 2026\r".into() }], &[], 0);
+    let file = with_unused_minifat_of_zeros(&doc);
+    for len in (0..file.len()).step_by(61) {
+        let _ = wordcraft_doc::cfb_guard::repair_unused_minifat(&file[..len]);
+        let _ = read(&file[..len]);
+    }
+    // Every byte of the header and of the directory, each set to a few values.
+    for at in (0..512).chain(2 * 512..3 * 512) {
+        for value in [0x00, 0x01, 0x7F, 0xFE, 0xFF] {
+            let mut bent = file.clone();
+            bent[at] = value;
+            let _ = wordcraft_doc::cfb_guard::repair_unused_minifat(&bent);
+            let _ = read(&bent);
+        }
+    }
+}
+
+#[test]
+fn a_doc_whose_mini_stream_is_in_use_is_not_touched() {
+    // A small stream lives in the mini stream: its MiniFAT is needed as it is, and a broken one stays an error.
+    let doc = text_doc(&[Piece { compressed: true, text: "Budget\r".into() }], &[], 0);
+    assert_eq!(wordcraft_doc::cfb_guard::repair_unused_minifat(&doc), None);
+    let mut broken = doc.clone();
+    let first = u32::from_le_bytes(broken[0x3C..0x40].try_into().expect("header")) as usize;
+    if first < 0xFFFF_FFFA {
+        let at = (first + 1) * 512;
+        broken[at..at + 512].fill(0);
+        assert_eq!(wordcraft_doc::cfb_guard::repair_unused_minifat(&broken), None);
+    }
+}
+
 #[test]
 fn not_a_compound_file() {
     assert!(matches!(read(&[0u8; 64]), Err(super::DocbinError::Container(_))));

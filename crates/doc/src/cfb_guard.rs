@@ -70,6 +70,125 @@ pub fn check(bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+// //// Neoffice — added (no upstream equivalent): a MiniFAT that no stream uses, marked free. macOS writes
+// //// `textutil -convert doc` files whose every stream is at least the cutoff (4096 bytes) and whose MiniFAT sector is
+// //// all zeros; `cfb` refuses them ("mini sector 0 pointed to twice"), so such a .doc opened as an empty document in
+// //// the Drive of the Suite, while Word and LibreOffice open it (they never read a MiniFAT nobody uses).
+/// A copy of the compound file `bytes` with its MiniFAT sectors marked free, for a reader to try when `cfb` refused
+/// the file as it is. Only when no stream lives in the mini stream (every stream of the directory is empty or at least
+/// the header's cutoff): the MiniFAT is then never read, and nothing a reader sees changes. `None` when the file is not
+/// a compound file this can read, when a stream does live in the mini stream (its chains are in the MiniFAT, which is
+/// needed as it is), when a chain is broken, or when the MiniFAT is free already.
+pub fn repair_unused_minifat(bytes: &[u8]) -> Option<Vec<u8>> {
+    const MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+    const FREE: u32 = 0xFFFF_FFFF;
+    const END_OF_CHAIN: u32 = 0xFFFF_FFFE;
+    const MAX_REGULAR: u32 = 0xFFFF_FFFA;
+    const HEADER_ENTRIES: usize = 109;
+    const ENTRY_LEN: usize = 128;
+    const STREAM: u8 = 2;
+    let u16_at = |at: usize| bytes.get(at..at.checked_add(2)?).map(|b| u16::from_le_bytes([b[0], b[1]]));
+    let u32_at = |at: usize| bytes.get(at..at.checked_add(4)?).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    if bytes.len() < 512 || bytes.get(..8) != Some(MAGIC.as_slice()) {
+        return None;
+    }
+    let sector_len: usize = match u16_at(0x1A)? {
+        3 => 512,
+        4 => 4096,
+        _ => return None,
+    };
+    let num_sectors = bytes.len().div_ceil(sector_len).checked_sub(1)?;
+    // Where sector `s` starts, when it is a whole sector of the file.
+    let start = |s: u32| -> Option<usize> {
+        let at = (s as usize).checked_add(1)?.checked_mul(sector_len)?;
+        (s <= MAX_REGULAR && at.checked_add(sector_len)? <= bytes.len()).then_some(at)
+    };
+    // The FAT sectors: the header's DIFAT, then its chain, trimmed as `check` (and `cfb`) trim them. The sectors
+    // something other than the MiniFAT uses are kept aside: a MiniFAT chain that runs into one is not repaired.
+    let num_fat_sectors = u32_at(0x2C)? as usize;
+    let mut difat: Vec<u32> = (0..HEADER_ENTRIES).filter_map(|i| u32_at(0x4C + i * 4)).collect();
+    let mut used = std::collections::HashSet::new();
+    let mut next = u32_at(0x44)?;
+    while next != END_OF_CHAIN && next != FREE {
+        if used.len() >= num_sectors || !used.insert(next) {
+            return None;
+        }
+        let at = start(next)?;
+        let entries = sector_len / 4 - 1;
+        difat.extend((0..entries).map(|i| u32_at(at + i * 4).unwrap_or(FREE)));
+        next = u32_at(at + entries * 4)?;
+    }
+    while difat.len() > HEADER_ENTRIES && difat.len() > num_fat_sectors && difat.last() == Some(&0) {
+        difat.pop();
+    }
+    while difat.last() == Some(&FREE) {
+        difat.pop();
+    }
+    let fat_sectors: Vec<u32> = difat.into_iter().filter(|&s| s != FREE).collect();
+    if fat_sectors.iter().any(|&s| start(s).is_none()) {
+        return None;
+    }
+    used.extend(fat_sectors.iter().copied());
+    let per_sector = sector_len / 4;
+    let fat = |s: u32| -> Option<u32> { u32_at(start(*fat_sectors.get(s as usize / per_sector)?)? + (s as usize % per_sector) * 4) };
+    // A chain of sectors through the FAT; `None` when it loops or leaves the file.
+    let chain = |first: u32| -> Option<Vec<u32>> {
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut s = first;
+        while s != END_OF_CHAIN {
+            if !seen.insert(s) || out.len() >= num_sectors {
+                return None;
+            }
+            start(s)?;
+            out.push(s);
+            s = fat(s)?;
+        }
+        Some(out)
+    };
+    const ROOT: u8 = 5;
+    let cutoff = u64::from(u32_at(0x38)?);
+    let directory = chain(u32_at(0x30)?)?;
+    used.extend(directory.iter().copied());
+    for &s in &directory {
+        let sector = start(s)?;
+        for entry in (sector..sector + sector_len).step_by(ENTRY_LEN) {
+            let kind = bytes.get(entry + 66).copied();
+            if kind != Some(STREAM) && kind != Some(ROOT) {
+                continue;
+            }
+            // A version 3 file keeps the size in the low 32 bits only; the high ones may hold anything.
+            let low = u64::from(u32_at(entry + 120)?);
+            let size = if sector_len == 512 { low } else { low | (u64::from(u32_at(entry + 124)?) << 32) };
+            if kind == Some(STREAM) && size > 0 && size < cutoff {
+                return None;
+            }
+            // The sectors of a regular stream, and of the root's mini stream, are not the MiniFAT's.
+            if size > 0 {
+                used.extend(chain(u32_at(entry + 116)?)?);
+            }
+        }
+    }
+    let first = u32_at(0x3C)?;
+    if first > MAX_REGULAR {
+        return None;
+    }
+    let minifat = chain(first)?;
+    if minifat.iter().any(|s| used.contains(s)) {
+        return None;
+    }
+    let mut out = bytes.to_vec();
+    let mut changed = false;
+    for s in minifat {
+        let at = start(s)?;
+        for byte in out.get_mut(at..at + sector_len)? {
+            changed |= *byte != 0xFF;
+            *byte = 0xFF;
+        }
+    }
+    changed.then_some(out)
+}
+
 /// A compound file of about 1 MB whose DIFAT chain lists one FAT sector 2048 × 127 times:
 /// without [`check`], `cfb` builds a FAT of about 130 MB for it. Regression input for the
 /// readers' tests: built only for tests, this crate's and (through the `test-support` feature,
@@ -104,6 +223,14 @@ pub fn repeating_difat_sample() -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    // //// Neoffice — repair_unused_minifat (see there): what it changes and what it leaves.
+    #[test]
+    fn a_minifat_is_marked_free_only_where_no_stream_uses_it() {
+        assert_eq!(super::repair_unused_minifat(b"not a compound file"), None);
+        // the repeating-DIFAT sample has a chain that loops: nothing is repaired
+        assert_eq!(super::repair_unused_minifat(&super::repeating_difat_sample()), None);
+    }
+
     #[test]
     fn a_repeating_difat_is_refused_and_a_small_file_passes() {
         assert!(super::check(&super::repeating_difat_sample()).is_err_and(|e| e.contains("FAT sectors in a file of")));

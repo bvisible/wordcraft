@@ -31,6 +31,9 @@
 //!   bar; a later `ok: true` for a save already refused marks it saved again when it has not changed since it was
 //!   handed over (a refused save the user then settled, by replacing the other version, ends there). The Drive of the
 //!   Suite and Neodesk answer every save.
+//! - `wordcraft:openFailed` (to the parent): `{ name, error }`. //// Neoffice's addition: the file the parent sent did not
+//!   open (a reader refused it), with the reason; the parent says so instead of leaving the empty document on its page.
+//!   Not sent for a file that asks for its password, nor when that dialog is later cancelled.
 //! - `wordcraft:dirty` (to the parent): `{ dirty }` whenever unsaved changes appear or go away.
 //! - `wordcraft:failed` (to the parent): `{ error }` when the app couldn't start.
 //!
@@ -108,6 +111,11 @@ impl Bridge {
             // //// Neoffice — not confirmed until the parent answers; the shell notes which revision of the document this was.
             handed.handed(&name);
             Ok(())
+        }));
+        // //// Neoffice — the page's file that did not open is said to the page (`Services::host_open_failed`).
+        let bridge = self.clone();
+        services.host_open_failed = Some(Box::new(move |name: &str, error: &str| {
+            bridge.send(&[("type", "wordcraft:openFailed".into()), ("name", name.into()), ("error", error.into())]);
         }));
         // Anything else that would download goes to the parent too.
         let bridge = self.clone();

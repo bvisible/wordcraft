@@ -472,6 +472,10 @@ impl WordApp {
                     // //// Neoffice — the Drive's new document is a blank file in US English: a French interface gets it in French.
                     self.session.adopt_editing_language_when_blank();
                 }
+                // //// Neoffice — and when it did not open, the page is told (Services::host_open_failed).
+                if let (Err(error), Some(tell)) = (&opened, &self.services.host_open_failed) {
+                    tell(&name, error);
+                }
                 continue;
             }
             // Any recipient file ends the pending picker request, so a later .txt drop opens normally.
