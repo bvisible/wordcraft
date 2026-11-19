@@ -85,6 +85,29 @@ pub const FRENCH: &[(&str, &str)] = &[
     (LANGUAGE_NAMES[0], "Espagnol (Amérique latine)"),
     (LANGUAGE_NAMES[1], "Espagnol (Uruguay)"),
     (LANGUAGE_NAMES[2], "Français (Suisse)"),
+    // The Home tab's Paragraph Tools and the status bar's missing fonts, which upstream's French catalog lacks (Haiku, 19.11.2026).
+    ("Paragraph Tools", "Outils de paragraphe"),
+    ("Paragraph\nTools", "Outils de\nparagraphe"),
+    ("Split Lines into Paragraphs", "Scinder les lignes en paragraphes"),
+    ("Add Blank Paragraphs Between", "Insérer des paragraphes vides entre"),
+    ("Separate Paragraphs", "Séparer les paragraphes"),
+    ("Delete Blank Paragraphs", "Supprimer les paragraphes vides"),
+    ("Remove Leading Spaces", "Supprimer les espaces en début de ligne"),
+    ("Remove Extra Spaces", "Supprimer les espaces superflus"),
+    ("Indent Leading Spaces", "Transformer les espaces en début de ligne en retrait"),
+    ("Indents to Leading Spaces", "Transformer les retraits en espaces en début de ligne"),
+    ("Join Lines", "Joindre les lignes"),
+    ("Delete Blank Paragraphs in the Whole Document", "Supprimer les paragraphes vides dans tout le document"),
+    ("Remove Leading Spaces in the Whole Document", "Supprimer les espaces en début de ligne dans tout le document"),
+    ("Remove Extra Spaces in the Whole Document", "Supprimer les espaces superflus dans tout le document"),
+    ("Shown in substitute fonts. Click for details.", "Affiché avec des polices de remplacement. Cliquez pour plus de détails."),
+    ("Not installed — shown as", "Non installée — affichée comme"),
+];
+
+/// Counts in French, by upstream's English forms (`i18n::tn`): (one, other, French one, French other).
+const FRENCH_COUNTS: &[(&str, &str, &str, &str)] = &[
+    ("{n} font not installed", "{n} fonts not installed", "{n} police non installée", "{n} polices non installées"),
+    ("…and {n} more", "…and {n} more", "… et {n} de plus", "… et {n} de plus"),
 ];
 
 /// The strings the interface looks up whatever the Nora pane does (its ribbon group and its switch in
@@ -323,6 +346,14 @@ const LANGUAGE_NAMES_WORDS: &[(&str, [&str; 3])] = &[
     ("es", ["Español (América Latina)", "Español (Uruguay)", "Francés (Suiza)"]),
     ("it", ["Spagnolo (America Latina)", "Spagnolo (Uruguay)", "Francese (Svizzera)"]),
 ];
+
+/// The forms of a count in `lang`, when Neoffice has translated it.
+pub fn counted(lang: Lang, one: &str, other: &str) -> Option<(&'static str, &'static str)> {
+    (lang.code() == "fr")
+        .then(|| FRENCH_COUNTS.iter().find(|(english_one, english_other, ..)| *english_one == one && *english_other == other))
+        .flatten()
+        .map(|(_, _, french_one, french_other)| (*french_one, *french_other))
+}
 
 /// `s` in `lang`, when Neoffice has translated it.
 pub fn plain(lang: Lang, s: &str) -> Option<&'static str> {

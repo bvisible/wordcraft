@@ -632,6 +632,26 @@ fn bundled_interface_fonts_cover_hungarian_without_system_fallbacks() {
     assert!(!lang("hu").uses_cjk());
 }
 
+// //// Neoffice — what upstream's French catalog lacks on the Home tab and in the status bar (`neoffice.rs`): the
+// //// paragraph tools, and the count of missing fonts, which `tn` looks up by its English forms.
+#[test]
+fn the_paragraph_tools_and_the_missing_fonts_are_in_french() {
+    needs_catalogs!();
+    let fr = lang("fr");
+    assert_eq!(tr(fr, "Paragraph Tools"), "Outils de paragraphe");
+    assert_eq!(tr(fr, "Paragraph\nTools"), "Outils de\nparagraphe");
+    assert_eq!(tr(fr, "Join Lines"), "Joindre les lignes");
+    set_current(fr);
+    let count = |n| tn(n, "{n} font not installed", "{n} fonts not installed");
+    let more = tn(3, "…and {n} more", "…and {n} more");
+    let (one, two) = (count(1), count(2));
+    set_current(Lang::EN);
+    assert_eq!(one, "1 police non installée");
+    assert_eq!(two, "2 polices non installées");
+    assert_eq!(more, "… et 3 de plus");
+    assert_eq!(count(2), "2 fonts not installed", "and English is untouched");
+}
+
 #[test]
 fn french_locales_and_saved_preference_work_without_changing_the_document() {
     needs_catalogs!();

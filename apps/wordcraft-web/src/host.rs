@@ -5,14 +5,16 @@
 //! WordCraft in an `<iframe>` and keep its files (a Nextcloud app, a personal file server). The
 //! same messages as GridCraft's and PdfCraft's bridges; each is a plain object with a `type`:
 //!
-//! - `wordcraft:ready` (to the parent): `{ version }`, sent once the app is running and
-//!   listening; send a file now.
+//! - `wordcraft:ready` (to the parent): `{ version, savesImports }`, sent once the app is running and
+//!   listening; send a file now. //// Neoffice — `savesImports: true`: this build honours `imported` below.
 //! - `wordcraft:open` (from the parent): `{ name, bytes }`, bytes an `ArrayBuffer` or
 //!   `Uint8Array`. It opens like a document picked with File › Open or dropped on the window.
 //!   //// Neoffice — it arrives in an inbox of its own (`Services::host_inbox`): it is the only file that may replace
 //!   the document, a document the person picks or drops is refused (`Services::host_owns_documents`). And one more
 //!   field, `id`: the page's own name for the file (the Drive's file id), which the Nora pane tells Nora with each
-//!   message about that document (`Services::nora_file`); a page that sends none changes nothing.
+//!   message about that document (`Services::nora_file`); a page that sends none changes nothing. And `imported`
+//!   (`true`): the page keeps this file as it is, so Save writes a `.docx` under the document's name, a new file, as for
+//!   a `.doc`, instead of the opened `.odt` or `.rtf` under its own name (`Services::host_import`).
 //! - `wordcraft:save` (to the parent): `{ name, saveAs, bytes }` (a transferred `ArrayBuffer`) for
 //!   every file WordCraft would otherwise download. The parent stores it and reports failures
 //!   itself. `saveAs` says whether the file becomes the document's file:
@@ -49,7 +51,7 @@ use wasm_bindgen::closure::Closure;
 // //// Neoffice — the tickets of the saves handed to the page, and the page's file named for Nora's pane.
 use wordcraft_ui_egui::async_saves::AsyncSaves;
 use wordcraft_ui_egui::host_saves::HostSaves;
-use wordcraft_ui_egui::{Inbox, NoraFile, Services, WordApp};
+use wordcraft_ui_egui::{HostImport, Inbox, NoraFile, Services, WordApp};
 
 /// The longest user name taken from `?author=`.
 const MAX_AUTHOR_CHARS: usize = 200;
@@ -103,7 +105,10 @@ impl Bridge {
         // lifted, never a document the person picks or drops (`Services::host_inbox`).
         let inbox = Inbox::default();
         services.host_inbox = Some(inbox.clone());
-        self.listen(inbox, file, host_saves.clone(), ctx);
+        // //// Neoffice — whether the page sent its file as an import (`Services::host_import`).
+        let import = HostImport::default();
+        services.host_import = Some(import.clone());
+        self.listen(inbox, file, import, host_saves.clone(), ctx);
         let bridge = self.clone();
         let handed = host_saves.clone();
         services.host_save = Some(Box::new(move |name: &str, bytes: &[u8], save_as: bool| {
@@ -148,7 +153,8 @@ impl Bridge {
     }
 
     pub fn post_ready(&self) {
-        self.send(&[("type", "wordcraft:ready".into()), ("version", env!("CARGO_PKG_VERSION").into())]);
+        // //// Neoffice — `savesImports`: the page may send `imported` and count on Save making the `.docx`.
+        self.send(&[("type", "wordcraft:ready".into()), ("version", env!("CARGO_PKG_VERSION").into()), ("savesImports", true.into())]);
     }
 
     /// The app couldn't start (no WebGPU or WebGL2, for example): let the parent say so.
@@ -175,8 +181,8 @@ impl Bridge {
     }
 
     /// Hear `wordcraft:open` from the parent and queue the file like a dropped one.
-    // //// Neoffice — and `wordcraft:saved`, its answers to the saves.
-    fn listen(&self, inbox: Inbox, file: NoraFile, saves: HostSaves, ctx: egui::Context) {
+    // //// Neoffice — and `wordcraft:saved`, its answers to the saves; `import` takes `imported` of each file.
+    fn listen(&self, inbox: Inbox, file: NoraFile, import: HostImport, saves: HostSaves, ctx: egui::Context) {
         let parent = self.parent.clone();
         let origin = self.origin.clone();
         let on_message = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
@@ -191,6 +197,9 @@ impl Bridge {
                     let Some(bytes) = bytes(&data) else { return };
                     // //// Neoffice — the page's name for the file (the Drive's file id), for Nora's pane.
                     *file.lock().unwrap_or_else(|e| e.into_inner()) = Some((name.clone(), string(&data, "id")));
+                    // //// Neoffice — only an explicit `true`: a page that does not know the field changes nothing.
+                    let imported = js_sys::Reflect::get(&data, &JsValue::from_str("imported")).ok().and_then(|v| v.as_bool()) == Some(true);
+                    import.store(imported, std::sync::atomic::Ordering::Relaxed);
                     inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, bytes));
                 }
                 // //// Neoffice — how storing a file went: it ends the ticket of the save (`host_saves`).

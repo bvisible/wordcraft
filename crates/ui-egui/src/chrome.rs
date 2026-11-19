@@ -435,7 +435,8 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
                     crate::i18n::isolate(&app.title_stem()),
                     if app.session.dirty {
                         tl!("Edited")
-                    } else if app.session.path.is_some() {
+                    // //// Neoffice — an import a hosting page sent has no file of its own yet: nothing was saved (`host_guard`).
+                    } else if app.session.path.is_some() && !app.import_not_saved_yet() {
                         tl!("Saved")
                     } else {
                         tl!("Not saved")

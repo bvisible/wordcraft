@@ -398,7 +398,14 @@ pub fn tn(n: u64, one: &str, other: &str) -> String {
         return I18N.trn(craft_i18n::Lang::PSEUDO, n, one, other);
     }
     let lang = current();
-    lang.i18n().trn(lang.lang, n, one, other)
+    let text = lang.i18n().trn(lang.lang, n, one, other);
+    // //// Neoffice — a count upstream's catalogs have no row for, in our words (`neoffice.rs`); a catalog that gains it wins.
+    if text == Lang::EN.i18n().trn(Lang::EN.lang, n, one, other)
+        && let Some((one, other)) = neoffice::counted(lang, one, other)
+    {
+        return lang.i18n().trn(lang.lang, n, one, other);
+    }
+    text
 }
 
 /// `s` in the current language as worded for `context` (`preview`, `template`), falling back to

@@ -127,7 +127,8 @@ pub use services::{HostSaveFn, Inbox, Services};
 pub use craft_nora::{HttpRequest, HttpResponse};
 pub(crate) use host_guard::{hidden_from_a_host, switches_document};
 pub use host_guard::{opens_as_document, picked_file_fits, picked_file_refused};
-pub use services::{NoraFile, NoraInbox};
+// //// Neoffice — the types of the hosting page's services: its file named for Nora, its answers, and an import (`host_import`).
+pub use services::{HostImport, NoraFile, NoraInbox};
 pub use state::{AutoSaveBlock, DefaultApp, SaveChoice, keeps_everything};
 
 /// Web: a save the browser's picker hasn't finished ([`async_saves`]).

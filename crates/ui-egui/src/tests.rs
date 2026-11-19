@@ -4973,6 +4973,50 @@ fn host_save_of_a_legacy_word_file_writes_a_docx() {
     assert_eq!(got.borrow().first().map(|(n, s, _)| (n.as_str(), *s)), Some(("old.docx", true)));
 }
 
+// //// Neoffice — an .odt or .rtf the page sent as an import (`Services::host_import`): Save writes the .docx, a new file for the
+// //// page, as for a .doc; the next Save goes to that file. Without the page saying so, Save goes back to the file
+// //// (`host_saves_go_back_to_the_opened_file`).
+#[test]
+fn host_save_of_a_file_the_page_sent_as_an_import_writes_a_docx() {
+    for name in ["note.odt", "note.rtf"] {
+        let (mut a, got) = host_app(false);
+        a.services.host_import = Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)));
+        host_open(&mut a, name);
+        a.execute("file.save", json!({})).unwrap();
+        assert!(!a.session.dirty);
+        a.run("text.insert", json!({"text": "More "})).unwrap();
+        a.execute("file.save", json!({})).unwrap();
+        let got = got.borrow();
+        let calls: Vec<(&str, bool)> = got.iter().map(|(n, s, _)| (n.as_str(), *s)).collect();
+        assert_eq!(calls, [("note.docx", true), ("note.docx", false)], "{name}");
+    }
+}
+
+// //// Neoffice — the title of a page's import says nothing was saved; a document with a file of its own says Saved.
+#[test]
+fn the_title_of_a_hosted_import_does_not_say_saved() {
+    use egui_kittest::kittest::Queryable;
+    for (path, import, state) in
+        [("Rapport.doc", false, "Not saved"), ("Rapport.odt", true, "Not saved"), ("Rapport.odt", false, "Saved"), ("Rapport.docx", false, "Saved")]
+    {
+        let mut a = app();
+        a.services.host_owns_documents = true;
+        a.services.host_import = Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(import)));
+        a.session.path = Some(path.into());
+        a.session.dirty = false;
+        let mut h = harness(a);
+        h.run_steps(4);
+        assert!(h.query_by_label_contains(&format!("Rapport — {state}")).is_some(), "{path}, imported: {import}");
+    }
+    // Without a hosting page, a .doc reads as upstream has it.
+    let mut a = app();
+    a.session.path = Some("Rapport.doc".into());
+    a.session.dirty = false;
+    let mut h = harness(a);
+    h.run_steps(4);
+    assert!(h.query_by_label_contains("Rapport — Saved").is_some());
+}
+
 /// Saving a document the host page never sent is Save As, so the page doesn't overwrite a
 /// file of the same name; the next Save goes back to it.
 #[test]

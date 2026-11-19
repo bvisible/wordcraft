@@ -135,6 +135,12 @@ pub struct Services {
     /// Web: told when a file of [`Services::host_inbox`] did not open, with its name and the reason. A file that asks
     /// for its password is not told, nor later when the password dialog is cancelled or refuses the password.
     pub host_open_failed: Option<Box<dyn Fn(&str, &str)>>,
+    // //// Neoffice — the hosting page says the file it sends is an import: it keeps that file as it is, and a Save makes the
+    // editor's own type next to it. Without it a Save of an .odt or .rtf came back under its own name and format, which the
+    // Drive of the Suite refuses for an import (the person had to find Save As).
+    /// Web: set from each file of [`Services::host_inbox`]: the page sent it as an import (`imported`), so that Save writes
+    /// a `.docx` under the document's name, as for a `.doc`, once and for all (the document is then that file).
+    pub host_import: Option<HostImport>,
     /// Desktop: write the app's current preferences out now, not only at exit (#2716): a
     /// document taken off the recent list should survive the app being killed before a normal
     /// close. `Ok(true)`: written; `Ok(false)`: nothing written because the host keeps no
@@ -155,6 +161,9 @@ pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
 pub type NoraInbox = std::sync::Arc<std::sync::Mutex<Vec<craft_nora::HttpResponse>>>;
 // //// Neoffice — the file the hosting page sent last, and its id for it (`Services::nora_file`).
 pub type NoraFile = std::sync::Arc<std::sync::Mutex<Option<(String, Option<String>)>>>;
+
+// //// Neoffice — whether the hosting page's last file is an import (`Services::host_import`).
+pub type HostImport = std::sync::Arc<std::sync::atomic::AtomicBool>;
 
 /// [`Services::host_save`]: `(file name, bytes, save_as)`. An error means the page didn't get
 /// the file, and the save failed.

@@ -134,6 +134,24 @@ impl WordApp {
         }
     }
 
+    /// The document is a file the hosting page sent as an import (`Services::host_import`) and it is not yet a Word
+    /// document: Save makes the `.docx` next to the page's file (`web_save_name`), which stays as it is.
+    pub(crate) fn is_the_pages_import(&self) -> bool {
+        self.services.host_import.as_ref().is_some_and(|import| import.load(std::sync::atomic::Ordering::Relaxed))
+            && self
+                .session
+                .path
+                .as_ref()
+                .and_then(|path| path.extension())
+                .is_some_and(|extension| !wordcraft_engine::io::is_word_package(&extension.to_string_lossy()))
+    }
+
+    /// A hosting page's import (a `.doc`, or a file it named an import) that no save has made a document yet: its title
+    /// does not say « Saved », nothing was.
+    pub(crate) fn import_not_saved_yet(&self) -> bool {
+        self.host_owns_documents() && (self.legacy_word_path() || self.is_the_pages_import())
+    }
+
     /// The community links (Discord) are shown unless the hosting page hides them.
     pub(crate) fn community_links(&self) -> bool {
         !self.services.hide_community_links

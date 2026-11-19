@@ -275,7 +275,8 @@ impl WordApp {
     }
 
     /// These paths have readers but no writer, so an interactive save needs another format.
-    pub(super) fn legacy_word_path(&self) -> bool {
+    // //// Neoffice — `pub(crate)`: the title of a hosted import (`host_guard`) asks too.
+    pub(crate) fn legacy_word_path(&self) -> bool {
         self.session
             .path
             .as_ref()
@@ -297,6 +298,8 @@ impl WordApp {
         if id == "file.save"
             && self.services.host_save.is_some()
             && !self.legacy_word_path()
+            // //// Neoffice — nor an .odt or .rtf the page sent as an import: Save makes the .docx, as for a .doc (`host_guard`).
+            && !self.is_the_pages_import()
             && let Some(name) = self.session.path.as_ref().and_then(|p| p.file_name())
         {
             return name.to_string_lossy().to_string();
