@@ -210,6 +210,16 @@ pub(crate) fn remember(open: bool) {
     PaneMemory::new(MEMORY).remember(open);
 }
 
+/// The pane is closed: a dictation under way is given up, its microphone closed and its words, on their way or not, dropped
+/// (craft-nora-ui `NoraPanel::cancel_dictation`, craft-nora `Input::CancelDictation`). Called on each frame the pane is
+/// closed, whatever closed it and whatever the window shows ([`pump_hidden`]); without a dictation it does nothing.
+fn let_go(app: &mut WordApp) {
+    app.nora.panel.cancel_dictation();
+    if app.nora.session.dictating() || app.nora.session.dictation().is_some() {
+        app.nora.session.handle(Input::CancelDictation);
+    }
+}
+
 /// Nora's button in the title bar, at the right beside the search box, whatever tab of the ribbon is in view, where the
 /// page offers Nora (craft-nora-ui `launcher::button`, NeoMail's « Ask Nora »): a click opens or closes the pane on the
 /// same conversation, and the person's choice is remembered in the browser. Lit while the pane is open.
@@ -231,7 +241,14 @@ pub fn top_button(app: &mut WordApp, ui: &mut Ui) {
 /// draws no frame and eframe runs only `logic`, so the pane's own pump (`show`) never runs and Nora's actions wait in
 /// the queue, the server asking again every fifteen seconds. Called from `WordApp::logic`, it reads her queue, plays her
 /// actions and sends the answers while nothing is drawn; where a frame is drawn (`show`) nothing changes.
+///
+/// As it runs on every frame, drawn or not, it is also where a closed pane gives its dictation up (`let_go`): the pane is
+/// closed by its close button, Nora's button, File › Options (the File tab then covers the window, and the pane is not
+/// drawn) or the page, and the window may show the File tab, Focus or another window when it is.
 pub fn pump_hidden(app: &mut WordApp, ctx: &egui::Context) {
+    if !app.ui.nora_pane {
+        let_go(app);
+    }
     if app.services.nora_http.is_none() || !app.nora.session.is_busy() || ctx.input(|input| input.viewport().visible()) != Some(false) {
         return;
     }
@@ -1000,6 +1017,107 @@ mod tests {
         let mut h = harness(alone);
         h.run_steps(4);
         assert!(h.query_by_label("Ask Nora").is_none());
+    }
+
+    /// The microphones on offer in the window by that name: the pane's, and upstream's Home › Dictate in the ribbon where it is
+    /// named (none may be, while the pane listens).
+    fn microphones(h: &egui_kittest::Harness<'static, WordApp>) -> usize {
+        h.query_all_by_label("Dictate").count()
+    }
+
+    /// A click on the pane's microphone: the lowest « Dictate » of the window, in the pane's text box (the ribbon is at the top).
+    fn click_the_pane_microphone(h: &egui_kittest::Harness<'static, WordApp>) {
+        h.get_all_by_label("Dictate").max_by(|a, b| a.rect().center().y.total_cmp(&b.rect().center().y)).expect("the pane's microphone").click();
+    }
+
+    /// The tester's gesture, by each way the pane closes: a dictation started by the pane's microphone, then the pane closed by
+    /// its close button, by Nora's button in the title bar, or by the page (`ui.nora`): the microphone is let go at once, and the
+    /// pane opened again shows no recording running, its microphone on offer again.
+    #[test]
+    fn closing_the_pane_lets_the_microphone_go_whatever_closes_it() {
+        type Way = fn(&mut egui_kittest::Harness<'static, WordApp>);
+        let ways: [(&str, Way); 3] = [
+            ("its close button", |h| h.get_by_label("Close").click()),
+            ("Nora's button", |h| h.get_by_label("Ask Nora").click()),
+            ("the page", |h| {
+                h.state_mut().run("ui.nora", json!({"value": false})).unwrap();
+            }),
+        ];
+        for (way, close) in ways {
+            let (services, _outbox, _inbox) = connected();
+            let mut a = app(services);
+            a.services.nora_dictation = true;
+            a.run("ui.nora", json!({"value": true})).unwrap();
+            a.nora.panel.pretend_microphone();
+            let mut h = harness(a);
+            h.run_steps(4);
+            let offered = microphones(&h);
+            click_the_pane_microphone(&h);
+            h.run_steps(4);
+            assert!(h.state().nora.panel.dictation_under_way(), "{way}: the microphone is asked for");
+            assert_eq!(microphones(&h), offered - 1, "{way}: the pane shows the recording");
+            close(&mut h);
+            h.run_steps(4);
+            assert!(!h.state().ui.nora_pane, "{way}: closed");
+            assert!(!h.state().nora.panel.dictation_under_way(), "{way}: the microphone is let go");
+            h.get_by_label("Ask Nora").click();
+            h.run_steps(6);
+            assert!(h.state().ui.nora_pane, "{way}: open again");
+            assert!(!h.state().nora.panel.dictation_under_way(), "{way}: no recording runs");
+            assert_eq!(microphones(&h), offered, "{way}: the pane's microphone is on offer again");
+        }
+    }
+
+    /// The pane closed while what the person said is on its way to be written down (its close button, then Nora's button in the
+    /// title bar): the dictation is given up, and the words that come in afterwards are written nowhere, the pane open again.
+    #[test]
+    fn closing_the_pane_gives_the_dictation_up() {
+        let (services, outbox, inbox) = connected();
+        let mut a = app(services);
+        a.services.nora_dictation = true;
+        a.run("ui.nora", json!({"value": true})).unwrap();
+        let mut h = harness(a);
+        h.run_steps(4);
+        let sent = h.state_mut().nora.session.handle(Input::Transcribe { audio_base64: "AAAA".into(), mime: "audio/webm".into() });
+        let Some(Output::Http(dictation)) = sent.first() else { panic!("the recording goes to the server: {sent:?}") };
+        assert!(h.state().nora.session.dictating());
+        h.get_by_label("Close").click();
+        h.run_steps(4);
+        assert!(!h.state().ui.nora_pane, "closed");
+        assert!(!h.state().nora.session.dictating(), "no words are awaited any more");
+        take(&outbox);
+        answer(&inbox, dictation, json!({"success": true, "text": "nobody may read this"}));
+        h.get_by_label("Ask Nora").click();
+        h.run_steps(6);
+        assert!(h.state().ui.nora_pane, "open again");
+        assert_eq!(h.state().nora.panel.draft(), "", "the words of the dictation given up are not in the box");
+    }
+
+    /// The pane closed from File › Options while the pane's microphone is open and what was said before is on its way to be
+    /// written down: the File tab covers the window and the pane is not drawn, yet the microphone is let go and the dictation
+    /// given up at once, not when the document comes back.
+    #[test]
+    fn closing_the_pane_from_the_options_gives_the_dictation_up_at_once() {
+        let (services, _outbox, _inbox) = connected();
+        let mut a = app(services);
+        a.services.nora_dictation = true;
+        a.run("ui.nora", json!({"value": true})).unwrap();
+        a.nora.panel.pretend_microphone();
+        let mut h = harness(a);
+        h.run_steps(4);
+        let sent = h.state_mut().nora.session.handle(Input::Transcribe { audio_base64: "AAAA".into(), mime: "audio/webm".into() });
+        assert!(matches!(sent.first(), Some(Output::Http(_))), "the recording goes to the server: {sent:?}");
+        click_the_pane_microphone(&h);
+        h.run_steps(4);
+        assert!(h.state().nora.panel.dictation_under_way(), "the microphone is asked for");
+        h.state_mut().run("file.options", json!({"pane": "advanced"})).unwrap();
+        h.run_steps(4);
+        h.get_by_label("Show the Nora assistant pane (experimental)").click();
+        h.run_steps(4);
+        assert!(!h.state().ui.nora_pane, "closed");
+        assert!(h.state().ui.backstage, "the File tab still covers the window");
+        assert!(!h.state().nora.panel.dictation_under_way(), "the microphone is let go");
+        assert!(!h.state().nora.session.dictating(), "no words are awaited any more");
     }
 
     /// File › Options › Advanced › Assistant is the `ui.nora` setting.
